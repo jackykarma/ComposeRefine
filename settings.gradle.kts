@@ -21,3 +21,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "ComposeRefine"
 include(":app")
+include(":features:feature-api")
+include(":features:imagepreview")

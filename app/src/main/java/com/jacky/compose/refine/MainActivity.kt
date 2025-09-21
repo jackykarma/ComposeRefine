@@ -6,42 +6,46 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import com.jacky.compose.refine.features.FeatureRegistry
 import com.jacky.compose.refine.ui.theme.ComposeRefineTheme
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             ComposeRefineTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
-                    )
+                val navController = rememberNavController()
+                val features = remember { FeatureRegistry.discover() }
+                Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
+                    NavHost(navController = navController, startDestination = "home") {
+                        composable("home") {
+                            LazyColumn(modifier = Modifier.padding(padding)) {
+                                items(features) { feature ->
+                                    Button(onClick = {
+                                        navController.navigate(feature.id)
+                                    }) {
+                                        Text(feature.displayName)
+                                    }
+                                }
+                            }
+                        }
+                        // 遍历注册所有Feature到路由管理中
+                        features.forEach { it.register(this, navController) }
+                    }
                 }
             }
         }
-    }
-}
-
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    ComposeRefineTheme {
-        Greeting("Android")
     }
 }

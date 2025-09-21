@@ -1,0 +1,16 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /Users/limao/Jacky/androidprojects/ComposeRefine/features/feature-api/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest5256651893165119763.xml:2:13-83
+INJECTED from /Users/limao/Jacky/androidprojects/ComposeRefine/features/feature-api/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest5256651893165119763.xml:2:13-83
+	package
+		INJECTED from /Users/limao/Jacky/androidprojects/ComposeRefine/features/feature-api/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest5256651893165119763.xml
+	xmlns:android
+		ADDED from /Users/limao/Jacky/androidprojects/ComposeRefine/features/feature-api/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest5256651893165119763.xml:2:23-81
+uses-sdk
+INJECTED from /Users/limao/Jacky/androidprojects/ComposeRefine/features/feature-api/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest5256651893165119763.xml reason: use-sdk injection requested
+INJECTED from /Users/limao/Jacky/androidprojects/ComposeRefine/features/feature-api/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest5256651893165119763.xml
+INJECTED from /Users/limao/Jacky/androidprojects/ComposeRefine/features/feature-api/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest5256651893165119763.xml
+	android:targetSdkVersion
+		INJECTED from /Users/limao/Jacky/androidprojects/ComposeRefine/features/feature-api/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest5256651893165119763.xml
+	android:minSdkVersion
+		INJECTED from /Users/limao/Jacky/androidprojects/ComposeRefine/features/feature-api/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest5256651893165119763.xml
