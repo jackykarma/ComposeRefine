@@ -14,3 +14,7 @@
 .cxx
 local.properties
 /.idea
+/features/imagepreview/build
+/features/feature-api/build/
+/features/mediagrid/build/
+/features/medialibrary/build/

@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.jacky.features.imagepreview"
+    namespace = "com.jacky.features.mediagrid"
     compileSdk = 35
 
     defaultConfig {
@@ -22,17 +22,20 @@ android {
 
     buildFeatures {
         compose = true
-        buildConfig = true
     }
 }
 
 dependencies {
     implementation(project(":features:feature-api"))
     implementation(project(":features:medialibrary"))
+
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.material3)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.foundation)
+
     implementation(libs.coil.compose)
+    implementation(libs.coil.video)
 }
 

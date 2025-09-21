@@ -4,7 +4,8 @@ import com.jacky.compose.feature.api.Feature
 
 object FeatureRegistry {
     private val candidates = listOf(
-        "com.jacky.features.imagepreview.ImagePreviewFeature"
+        "com.jacky.features.imagepreview.ImagePreviewFeature",
+        "com.jacky.features.mediagrid.MediaGridFeature"
     )
 
     fun discover(): List<Feature> = candidates.mapNotNull { className ->

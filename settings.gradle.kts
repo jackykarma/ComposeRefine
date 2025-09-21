@@ -23,3 +23,5 @@ rootProject.name = "ComposeRefine"
 include(":app")
 include(":features:feature-api")
 include(":features:imagepreview")
+include(":features:medialibrary")
+include(":features:mediagrid")
