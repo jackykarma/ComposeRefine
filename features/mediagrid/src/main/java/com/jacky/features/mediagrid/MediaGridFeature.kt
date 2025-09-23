@@ -4,18 +4,37 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgeDefaults
+import androidx.compose.material3.Button
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -69,6 +88,11 @@ class MediaGridFeature : Feature {
     companion object { private const val ROUTE = "media_grid" }
 }
 
+private enum class FilterOption { All, Images, Videos, Live, Favorites }
+
+
+@OptIn(ExperimentalFoundationApi::class)
+
 @Composable
 private fun MediaGridScreen(
     mimeArg: String,
@@ -77,29 +101,44 @@ private fun MediaGridScreen(
     span: Int = 3,
     spacing: Dp = 2.dp,
 ) {
+
+
     val context = LocalContext.current
-    val mimeFilter = remember(mimeArg) {
-        when (mimeArg.lowercase()) {
-            "image", "images", "img" -> MimeFilter.Images
-            "video", "videos", "vid" -> MimeFilter.Videos
-            else -> MimeFilter.ImagesAndVideos
-        }
+
+    var currentFilter by remember(mimeArg) {
+        mutableStateOf(
+            when (mimeArg.lowercase()) {
+                "image", "images", "img" -> FilterOption.Images
+                "video", "videos", "vid" -> FilterOption.Videos
+                else -> FilterOption.All
+            }
+        )
     }
 
-    val requiredPermissions = remember(mimeFilter) {
+    fun toRepoFilter(option: FilterOption): Triple<MimeFilter, Boolean, Boolean> = when (option) {
+        FilterOption.All -> Triple(MimeFilter.ImagesAndVideos, false, false)
+        FilterOption.Images -> Triple(MimeFilter.Images, false, false)
+        FilterOption.Videos -> Triple(MimeFilter.Videos, false, false)
+        FilterOption.Favorites -> Triple(MimeFilter.ImagesAndVideos, true, false)
+        FilterOption.Live -> Triple(MimeFilter.Images, false, true) // 尽力匹配实况，优先图片集合
+    }
+
+    val (mimeFilter, favoritesOnly, liveOnly) = remember(currentFilter) { toRepoFilter(currentFilter) }
+
+    val requiredPermissions = remember(currentFilter) {
         if (Build.VERSION.SDK_INT >= 33) {
-            when (mimeFilter) {
-                MimeFilter.Images -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
-                MimeFilter.Videos -> arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
-                MimeFilter.ImagesAndVideos -> arrayOf(
+            when (currentFilter) {
+                FilterOption.Images, FilterOption.Live -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+                FilterOption.Videos -> arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
+                FilterOption.All, FilterOption.Favorites -> arrayOf(
                     Manifest.permission.READ_MEDIA_IMAGES,
                     Manifest.permission.READ_MEDIA_VIDEO
                 )
             }
-        } else arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+        } else arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
 
-    var hasPermissions by remember {
+    var hasPermissions by remember(currentFilter) {
         mutableStateOf(requiredPermissions.all {
             ContextCompat.checkSelfPermission(context, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
         })
@@ -110,7 +149,7 @@ private fun MediaGridScreen(
         hasPermissions = result.values.all { it }
     }
 
-    var page by remember { mutableStateOf(0) }
+    var page by remember { mutableIntStateOf(0) }
     var items by remember { mutableStateOf<List<MediaAsset>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
 
@@ -125,7 +164,9 @@ private fun MediaGridScreen(
                     context = context,
                     filter = mimeFilter,
                     page = page,
-                    pageSize = pageSize
+                    pageSize = pageSize,
+                    favoritesOnly = favoritesOnly,
+                    liveOnly = liveOnly,
                 )
                 items = items + newPage
                 page += 1
@@ -135,57 +176,139 @@ private fun MediaGridScreen(
         }
     }
 
-    LaunchedEffect(hasPermissions, mimeFilter, pageSize) {
-        if (hasPermissions) {
-            page = 0
-            items = emptyList()
-            loadNextPage()
+    fun reloadFirstPage() {
+        if (isLoading) return
+        isLoading = true
+        scope.launch {
+            try {
+                val firstPage = MediaStoreRepository.default.queryPage(
+                    context = context,
+                    filter = mimeFilter,
+                    page = 0,
+                    pageSize = pageSize,
+                    favoritesOnly = favoritesOnly,
+                    liveOnly = liveOnly,
+                )
+                items = firstPage
+                page = 1
+            } finally {
+                isLoading = false
+            }
         }
     }
 
-    val content: @Composable () -> Unit = when {
-        !hasPermissions -> {
-            {
+    LaunchedEffect(hasPermissions, mimeFilter, pageSize, favoritesOnly, liveOnly) {
+        if (hasPermissions) {
+            reloadFirstPage()
+        }
+    }
+
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize()) {
+        when {
+            !hasPermissions -> {
                 Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     Text("读取媒体库需要权限")
                     Spacer(Modifier.height(8.dp))
-                    androidx.compose.material3.Button(onClick = { permissionLauncher.launch(requiredPermissions) }) {
+                    Button(onClick = { permissionLauncher.launch(requiredPermissions) }) {
                         Text("去授权")
                     }
                 }
             }
-        }
-        items.isEmpty() -> {
-            { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂无媒体") } }
-        }
-        else -> {
-            {
+            items.isEmpty() -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂无媒体") }
+            }
+            else -> {
                 val uris = remember(items) { items.map { it.uri.toString() } }
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(span),
-                    contentPadding = PaddingValues(spacing),
-                    horizontalArrangement = Arrangement.spacedBy(spacing),
-                    verticalArrangement = Arrangement.spacedBy(spacing),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    itemsIndexed(items) { index, asset ->
-                        if (index >= items.lastIndex - span * 2) {
-                            // 逼近底部时触发加载
-                            loadNextPage()
+                        columns = GridCells.Fixed(span),
+                        contentPadding = PaddingValues(spacing),
+                        horizontalArrangement = Arrangement.spacedBy(spacing),
+                        verticalArrangement = Arrangement.spacedBy(spacing),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        itemsIndexed(items, key = { _, asset -> asset.uri.toString() }) { index, asset ->
+                            if (index >= items.lastIndex - span * 2) {
+                                loadNextPage()
+                            }
+                            MediaThumb(
+                                uri = asset.uri.toString(),
+                                isVideo = asset.isVideo,
+                                durationMs = asset.durationMs ?: 0L,
+                                onClick = { onItemClick(uris, index) },
+                                modifier = Modifier.animateItem()
+                            )
                         }
-                        MediaThumb(
-                            uri = asset.uri.toString(),
-                            isVideo = asset.isVideo,
-                            durationMs = asset.durationMs ?: 0L,
-                            onClick = { onItemClick(uris, index) }
-                        )
                     }
+
+            }
+        }
+
+        // 悬浮筛选按钮
+        FloatingActionButton(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 32.dp, bottom = 32.dp),
+            onClick = { menuExpanded = true }
+        ) { Text("筛选") }
+
+        // 自定义弹出菜单：以 FAB 为参照，显示在其上方且右侧对齐
+        if (menuExpanded) {
+            val overlayInteraction = remember { MutableInteractionSource() }
+            // 点击遮罩任意处关闭
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(indication = null, interactionSource = overlayInteraction) { menuExpanded = false }
+            ) {}
+
+            val fabSize = 56.dp // M3 默认 FAB 尺寸
+            val gap = 8.dp
+            androidx.compose.material3.Card(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 32.dp, bottom = 32.dp + fabSize + gap)
+            ) {
+                @Composable
+                fun MenuEntry(label: String, selected: Boolean, onClick: () -> Unit) {
+                    val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(bg)
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .clickable { onClick() },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 居中文本
+                        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                            Text(label, textAlign = TextAlign.Center)
+                        }
+                        // 右侧预留等宽区域，避免文字位移
+                        Box(Modifier.width(24.dp), contentAlignment = Alignment.CenterEnd) {
+                            if (selected) {
+                                Text("\u2713", color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+
+                fun select(option: FilterOption) {
+                    menuExpanded = false
+                    if (currentFilter != option) currentFilter = option
+                }
+
+                Column(Modifier.width(140.dp)) {
+                    MenuEntry("全部", currentFilter == FilterOption.All) { select(FilterOption.All) }
+                    MenuEntry("图片", currentFilter == FilterOption.Images) { select(FilterOption.Images) }
+                    MenuEntry("视频", currentFilter == FilterOption.Videos) { select(FilterOption.Videos) }
+                    MenuEntry("实况", currentFilter == FilterOption.Live) { select(FilterOption.Live) }
+                    MenuEntry("收藏", currentFilter == FilterOption.Favorites) { select(FilterOption.Favorites) }
                 }
             }
         }
     }
-
-    content()
 }
 
 @Composable
@@ -194,9 +317,10 @@ private fun MediaThumb(
     isVideo: Boolean,
     durationMs: Long,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .aspectRatio(1f)
             .background(Color.Black)
             .clickable { onClick() }
@@ -204,7 +328,7 @@ private fun MediaThumb(
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
                 .data(uri)
-                .crossfade(true)
+                .crossfade(false)
                 // 对视频依赖 coil-video 以解码首帧
                 .build(),
             contentDescription = null,

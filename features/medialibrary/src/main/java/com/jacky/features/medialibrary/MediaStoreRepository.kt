@@ -30,7 +30,9 @@ interface MediaStoreRepository {
         context: Context,
         filter: MimeFilter,
         page: Int,
-        pageSize: Int
+        pageSize: Int,
+        favoritesOnly: Boolean = false,
+        liveOnly: Boolean = false,
     ): List<MediaAsset>
 
     companion object {
@@ -43,29 +45,43 @@ private class AndroidMediaStoreRepository : MediaStoreRepository {
         context: Context,
         filter: MimeFilter,
         page: Int,
-        pageSize: Int
+        pageSize: Int,
+        favoritesOnly: Boolean,
+        liveOnly: Boolean,
     ): List<MediaAsset> {
         val cr = context.contentResolver
-        val (uri, selection, selectionArgs) = when (filter) {
-            MimeFilter.Images -> Triple(
-                filesCollection(),
-                "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?",
-                arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString())
-            )
-            MimeFilter.Videos -> Triple(
-                filesCollection(),
-                "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?",
-                arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString())
-            )
-            MimeFilter.ImagesAndVideos -> Triple(
-                filesCollection(),
-                "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?)",
-                arrayOf(
+
+        // liveOnly 目前仅尽力支持：强制限定为图片集合
+        val effectiveFilter = if (liveOnly) MimeFilter.Images else filter
+
+        var baseSelection: String
+        var baseArgs: MutableList<String>
+        val uri = filesCollection()
+        when (effectiveFilter) {
+            MimeFilter.Images -> {
+                baseSelection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?"
+                baseArgs = mutableListOf(MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString())
+            }
+            MimeFilter.Videos -> {
+                baseSelection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?"
+                baseArgs = mutableListOf(MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString())
+            }
+            MimeFilter.ImagesAndVideos -> {
+                baseSelection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?)"
+                baseArgs = mutableListOf(
                     MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
                     MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString()
                 )
-            )
+            }
         }
+
+        // 收藏筛选：Android 11+ (API 30) 支持 IS_FAVORITE 列
+        if (favoritesOnly && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            baseSelection = "($baseSelection) AND ${MediaStore.MediaColumns.IS_FAVORITE} = 1"
+        }
+
+        val selection = baseSelection
+        val selectionArgs = baseArgs.toTypedArray()
 
         val projection = arrayOf(
             MediaStore.Files.FileColumns._ID,
