@@ -40,5 +40,11 @@ dependencies {
 
     implementation(libs.coil.compose)
     implementation(libs.coil.video)
+
+    // Paging3 & ViewModel
+    implementation(libs.androidx.paging.runtime)
+    implementation(libs.androidx.paging.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
 }
 

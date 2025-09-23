@@ -7,6 +7,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Mime 类型过滤 */
 enum class MimeFilter {
@@ -35,6 +38,14 @@ interface MediaStoreRepository {
         liveOnly: Boolean = false,
     ): List<MediaAsset>
 
+    /** 统计当前筛选条件下的总条数，用于占位与快速跳转 */
+    suspend fun count(
+        context: Context,
+        filter: MimeFilter,
+        favoritesOnly: Boolean = false,
+        liveOnly: Boolean = false,
+    ): Int
+
     companion object {
         val default: MediaStoreRepository = AndroidMediaStoreRepository()
     }
@@ -48,7 +59,7 @@ private class AndroidMediaStoreRepository : MediaStoreRepository {
         pageSize: Int,
         favoritesOnly: Boolean,
         liveOnly: Boolean,
-    ): List<MediaAsset> {
+    ): List<MediaAsset> = withContext(Dispatchers.IO) {
         val cr = context.contentResolver
 
         // liveOnly 目前仅尽力支持：强制限定为图片集合
@@ -152,7 +163,53 @@ private class AndroidMediaStoreRepository : MediaStoreRepository {
                 )
             }
         }
-        return list
+        if (cursor == null) {
+            Log.w("MediaRepo", "queryPage: cursor=null filter=${effectiveFilter} favorites=${favoritesOnly} live=${liveOnly} page=${page} pageSize=${pageSize} offset=${offset}")
+        } else {
+            Log.d("MediaRepo", "queryPage: returned=${list.size} filter=${effectiveFilter} favorites=${favoritesOnly} live=${liveOnly} page=${page} pageSize=${pageSize} offset=${offset} sdk=${Build.VERSION.SDK_INT}")
+        }
+
+        list
+    }
+
+    override suspend fun count(
+        context: Context,
+        filter: MimeFilter,
+        favoritesOnly: Boolean,
+        liveOnly: Boolean,
+    ): Int = withContext(Dispatchers.IO) {
+        val cr = context.contentResolver
+        val effectiveFilter = if (liveOnly) MimeFilter.Images else filter
+        var baseSelection: String
+        var baseArgs: MutableList<String>
+        when (effectiveFilter) {
+            MimeFilter.Images -> {
+                baseSelection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?"
+                baseArgs = mutableListOf(MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString())
+            }
+            MimeFilter.Videos -> {
+                baseSelection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?"
+                baseArgs = mutableListOf(MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString())
+            }
+            MimeFilter.ImagesAndVideos -> {
+                baseSelection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?)"
+                baseArgs = mutableListOf(
+                    MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
+                    MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString()
+                )
+            }
+        }
+        if (favoritesOnly && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            baseSelection = "($baseSelection) AND ${MediaStore.MediaColumns.IS_FAVORITE} = 1"
+        }
+        val selection = baseSelection
+        val selectionArgs = baseArgs.toTypedArray()
+        val projection = arrayOf(MediaStore.Files.FileColumns._ID)
+        val uri = filesCollection()
+        val cursor = cr.query(uri, projection, selection, selectionArgs, null)
+        val total = cursor?.use { it.count } ?: 0
+        Log.d("MediaRepo", "count: total=$total filter=$effectiveFilter fav=$favoritesOnly live=$liveOnly")
+        total
     }
 
     private fun imagesCollection(): Uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)

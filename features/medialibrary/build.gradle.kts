@@ -21,6 +21,6 @@ android {
 }
 
 dependencies {
-    // No external deps required; uses Android framework MediaStore
+    implementation(libs.kotlinx.coroutines.android)
 }
 
