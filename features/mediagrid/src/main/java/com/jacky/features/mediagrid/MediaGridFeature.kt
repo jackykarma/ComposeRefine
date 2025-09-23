@@ -1,15 +1,23 @@
 package com.jacky.features.mediagrid
 
+
 import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,13 +27,30 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,13 +59,22 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -85,7 +119,9 @@ class MediaGridFeature : Feature {
         }
     }
 
-    companion object { private const val ROUTE = "media_grid" }
+    companion object {
+        private const val ROUTE = "media_grid"
+    }
 }
 
 private enum class FilterOption { All, Images, Videos, Live, Favorites }
@@ -98,11 +134,9 @@ private fun MediaGridScreen(
     mimeArg: String,
     pageSize: Int,
     onItemClick: (uris: List<String>, index: Int) -> Unit,
-    span: Int = 3,
+    span: Int = 4,
     spacing: Dp = 2.dp,
 ) {
-
-
     val context = LocalContext.current
 
     var currentFilter by remember(mimeArg) {
@@ -140,7 +174,10 @@ private fun MediaGridScreen(
 
     var hasPermissions by remember(currentFilter) {
         mutableStateOf(requiredPermissions.all {
-            ContextCompat.checkSelfPermission(context, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(
+                context,
+                it
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         })
     }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -197,6 +234,10 @@ private fun MediaGridScreen(
         }
     }
 
+    val colorScheme = MaterialTheme.colorScheme
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    val focusManager = LocalFocusManager.current
+
     LaunchedEffect(hasPermissions, mimeFilter, pageSize, favoritesOnly, liveOnly) {
         if (hasPermissions) {
             reloadFirstPage()
@@ -205,109 +246,79 @@ private fun MediaGridScreen(
 
     var menuExpanded by remember { mutableStateOf(false) }
 
-    Box(Modifier.fillMaxSize()) {
-        when {
-            !hasPermissions -> {
-                Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                    Text("读取媒体库需要权限")
-                    Spacer(Modifier.height(8.dp))
-                    Button(onClick = { permissionLauncher.launch(requiredPermissions) }) {
-                        Text("去授权")
-                    }
-                }
-            }
-            items.isEmpty() -> {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂无媒体") }
-            }
-            else -> {
-                val uris = remember(items) { items.map { it.uri.toString() } }
-                LazyVerticalGrid(
-                        columns = GridCells.Fixed(span),
-                        contentPadding = PaddingValues(spacing),
-                        horizontalArrangement = Arrangement.spacedBy(spacing),
-                        verticalArrangement = Arrangement.spacedBy(spacing),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        itemsIndexed(items, key = { _, asset -> asset.uri.toString() }) { index, asset ->
-                            if (index >= items.lastIndex - span * 2) {
-                                loadNextPage()
+    Box(Modifier
+        .fillMaxSize()
+        .background(colorScheme.background)) {
+        Column(Modifier.fillMaxSize()) {
+
+            SearchBar(query = searchQuery, onQueryChange = { searchQuery = it })
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier
+                .weight(1f)
+                .fillMaxWidth()) {
+                when {
+                    !hasPermissions -> {
+                        Column(
+                            Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text("读取媒体库需要权限")
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = { permissionLauncher.launch(requiredPermissions) }) {
+                                Text("去授权")
                             }
-                            MediaThumb(
-                                uri = asset.uri.toString(),
-                                isVideo = asset.isVideo,
-                                durationMs = asset.durationMs ?: 0L,
-                                onClick = { onItemClick(uris, index) },
-                                modifier = Modifier.animateItem()
-                            )
                         }
                     }
 
-            }
-        }
+                    items.isEmpty() -> {
+                        Box(
+                            Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) { Text("暂无媒体") }
+                    }
 
-        // 悬浮筛选按钮
-        FloatingActionButton(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 32.dp, bottom = 32.dp),
-            onClick = { menuExpanded = true }
-        ) { Text("筛选") }
-
-        // 自定义弹出菜单：以 FAB 为参照，显示在其上方且右侧对齐
-        if (menuExpanded) {
-            val overlayInteraction = remember { MutableInteractionSource() }
-            // 点击遮罩任意处关闭
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(indication = null, interactionSource = overlayInteraction) { menuExpanded = false }
-            ) {}
-
-            val fabSize = 56.dp // M3 默认 FAB 尺寸
-            val gap = 8.dp
-            androidx.compose.material3.Card(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 32.dp, bottom = 32.dp + fabSize + gap)
-            ) {
-                @Composable
-                fun MenuEntry(label: String, selected: Boolean, onClick: () -> Unit) {
-                    val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(bg)
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
-                            .clickable { onClick() },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // 居中文本
-                        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                            Text(label, textAlign = TextAlign.Center)
-                        }
-                        // 右侧预留等宽区域，避免文字位移
-                        Box(Modifier.width(24.dp), contentAlignment = Alignment.CenterEnd) {
-                            if (selected) {
-                                Text("\u2713", color = MaterialTheme.colorScheme.primary)
+                    else -> {
+                        val uris = remember(items) { items.map { it.uri.toString() } }
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(span),
+                            contentPadding = PaddingValues(spacing),
+                            horizontalArrangement = Arrangement.spacedBy(spacing),
+                            verticalArrangement = Arrangement.spacedBy(spacing),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            itemsIndexed(
+                                items,
+                                key = { _, asset -> asset.uri.toString() }) { index, asset ->
+                                if (index >= items.lastIndex - span * 2) {
+                                    loadNextPage()
+                                }
+                                MediaThumb(
+                                    uri = asset.uri.toString(),
+                                    isVideo = asset.isVideo,
+                                    durationMs = asset.durationMs ?: 0L,
+                                    onClick = { onItemClick(uris, index) },
+                                    modifier = Modifier.animateItem()
+                                )
                             }
                         }
                     }
                 }
-
-                fun select(option: FilterOption) {
-                    menuExpanded = false
-                    if (currentFilter != option) currentFilter = option
-                }
-
-                Column(Modifier.width(140.dp)) {
-                    MenuEntry("全部", currentFilter == FilterOption.All) { select(FilterOption.All) }
-                    MenuEntry("图片", currentFilter == FilterOption.Images) { select(FilterOption.Images) }
-                    MenuEntry("视频", currentFilter == FilterOption.Videos) { select(FilterOption.Videos) }
-                    MenuEntry("实况", currentFilter == FilterOption.Live) { select(FilterOption.Live) }
-                    MenuEntry("收藏", currentFilter == FilterOption.Favorites) { select(FilterOption.Favorites) }
-                }
             }
         }
+
+        FilterFab(onClick = { menuExpanded = true })
+
+        FilterMenu(
+            expanded = menuExpanded,
+            onDismissRequest = { menuExpanded = false },
+            current = currentFilter,
+            onSelect = { option ->
+                menuExpanded = false
+                if (currentFilter != option) currentFilter = option
+            }
+        )
+
     }
 }
 
@@ -362,3 +373,162 @@ private fun formatDuration(ms: Long): String {
     return if (h > 0) String.format("%d:%02d:%02d", h, m, s) else String.format("%d:%02d", m, s)
 }
 
+
+@Composable
+private fun SearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onSearch: ((String) -> Unit)? = null,
+) {
+    val colors = MaterialTheme.colorScheme
+    val focusManager = LocalFocusManager.current
+    var focused by remember { mutableStateOf(false) }
+
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = colors.surfaceContainerHigh,
+        tonalElevation = 0.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(top = 16.dp, start = 16.dp, end = 16.dp)
+            .height(48.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.Search, contentDescription = null, tint = colors.onSurfaceVariant)
+            Spacer(Modifier.width(8.dp))
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = LocalTextStyle.current.merge(TextStyle(color = colors.onSurface)),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onSearch?.invoke(query); focusManager.clearFocus() }),
+                cursorBrush = SolidColor(colors.primary),
+                modifier = Modifier
+                    .weight(1f)
+                    .onFocusChanged { focused = it.isFocused }
+            ) { innerTextField ->
+                Box(Modifier.fillMaxWidth()) {
+                    if (query.isEmpty() && !focused) {
+                        Text("输入时间、地点、文件名...", color = colors.onSurfaceVariant)
+                    }
+                    innerTextField()
+                }
+            }
+            if (query.isNotEmpty() || focused) {
+                IconButton(
+                    onClick = { onQueryChange(""); focusManager.clearFocus() },
+                    modifier = Modifier.semantics { contentDescription = "清空" }
+                ) { Icon(Icons.Filled.Close, contentDescription = null, tint = colors.onSurfaceVariant) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BoxScope.FilterFab(onClick: () -> Unit) {
+    FloatingActionButton(
+        onClick = onClick,
+        modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .padding(end = 16.dp, bottom = 32.dp)
+            .size(48.dp),
+        shape = CircleShape
+    ) {
+        Icon(Icons.Filled.FilterList, contentDescription = "筛选")
+    }
+}
+
+@Composable
+private fun BoxScope.FilterMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    current: FilterOption,
+    onSelect: (FilterOption) -> Unit,
+) {
+    // 轻量遮罩，仅在展开时出现
+    if (expanded) {
+        val overlayInteraction = remember { MutableInteractionSource() }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(
+                    indication = null,
+                    interactionSource = overlayInteraction
+                ) { onDismissRequest() }
+        ) {}
+    }
+
+    val fabSize = 56.dp
+    val gap = 8.dp
+    AnimatedVisibility(
+        visible = expanded,
+        enter = fadeIn(animationSpec = tween(180)) + slideInVertically(animationSpec = tween(220)) { it / 2 },
+        exit = fadeOut(animationSpec = tween(140)) + slideOutVertically(animationSpec = tween(180)) { it / 2 }
+    ) {
+        // 在一个填充父级的 Box 中对齐，避免 align 在非 Box 父级失效
+        Box(Modifier.fillMaxSize()) {
+            Card(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 32.dp, bottom = 32.dp + fabSize + gap)
+            ) {
+                Column(Modifier.width(140.dp)) {
+                    FilterMenuEntry(
+                        "全部",
+                        current == FilterOption.All
+                    ) { onSelect(FilterOption.All) }
+                    FilterMenuEntry(
+                        "图片",
+                        current == FilterOption.Images
+                    ) { onSelect(FilterOption.Images) }
+                    FilterMenuEntry(
+                        "视频",
+                        current == FilterOption.Videos
+                    ) { onSelect(FilterOption.Videos) }
+                    FilterMenuEntry(
+                        "实况",
+                        current == FilterOption.Live
+                    ) { onSelect(FilterOption.Live) }
+                    FilterMenuEntry("收藏", current == FilterOption.Favorites) {
+                        onSelect(
+                            FilterOption.Favorites
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterMenuEntry(label: String, selected: Boolean, onClick: () -> Unit) {
+    val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(bg)
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            Text(label, textAlign = TextAlign.Center)
+        }
+        Box(Modifier.width(24.dp), contentAlignment = Alignment.CenterEnd) {
+            if (selected) Icon(
+                Icons.Filled.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}

@@ -35,6 +35,9 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.foundation)
 
+    // Material Icons (for Search/Filter icons)
+    implementation(libs.androidx.material.icons.extended)
+
     implementation(libs.coil.compose)
     implementation(libs.coil.video)
 }
