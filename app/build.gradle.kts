@@ -64,6 +64,9 @@ dependencies {
     implementation(project(":features:feature-api"))
     implementation(project(":features:imagepreview"))
     implementation(project(":features:mediagrid"))
+    implementation(libs.coil.compose)
+    implementation(libs.coil.video)
+
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

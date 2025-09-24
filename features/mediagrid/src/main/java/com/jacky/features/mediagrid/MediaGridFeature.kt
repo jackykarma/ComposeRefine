@@ -40,6 +40,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 
+import androidx.compose.foundation.BorderStroke
+
 
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -105,6 +107,7 @@ import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+
 import com.jacky.compose.feature.api.Feature
 import com.jacky.features.medialibrary.MimeFilter
 import kotlinx.coroutines.delay
@@ -461,11 +464,11 @@ private fun MediaThumb(
             .background(Color.LightGray)
             .clickable { onClick() }
     ) {
+        val context = LocalContext.current
         AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
+            model = ImageRequest.Builder(context)
                 .data(uri)
                 .crossfade(false)
-                // 对视频依赖 coil-video 以解码首帧
                 .build(),
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
@@ -476,14 +479,22 @@ private fun MediaThumb(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(4.dp)
+                    .padding(6.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .background(Color(0x80000000))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                val cs = MaterialTheme.colorScheme
+                val bg = if (isSystemInDarkTheme()) cs.surface else Color.White
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = bg,
+                    contentColor = cs.onSurface,
+                    tonalElevation = 0.dp,
+                    border = BorderStroke(0.75.dp, cs.outlineVariant.copy(alpha = 0.4f))
                 ) {
-                    Text(text = dur, color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = dur,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
                 }
             }
         }
