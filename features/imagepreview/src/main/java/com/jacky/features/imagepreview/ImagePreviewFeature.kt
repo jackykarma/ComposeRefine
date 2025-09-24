@@ -2,6 +2,7 @@ package com.jacky.features.imagepreview
 
 import android.Manifest
 import android.os.Build
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
@@ -30,21 +31,21 @@ class ImagePreviewFeature : Feature {
 
     override fun register(navGraphBuilder: NavGraphBuilder, navController: NavHostController) {
         navGraphBuilder.composable(
-            route = "$ROUTE?url={url}&index={index}&test={test}&mimetype={mimetype}&pageSize={pageSize}",
+            route = "$ROUTE?url={url}&focusUri={focusUri}&test={test}&mimetype={mimetype}&pageSize={pageSize}",
             arguments = listOf(
                 navArgument("url") { type = NavType.StringType; nullable = true },
-                navArgument("index") { type = NavType.IntType; defaultValue = 0 },
+                navArgument("focusUri") { type = NavType.StringType; defaultValue = "" },
                 navArgument("test") { type = NavType.BoolType; defaultValue = false },
                 navArgument("mimetype") { type = NavType.StringType; defaultValue = "image" },
                 navArgument("pageSize") { type = NavType.IntType; defaultValue = 30 }
             )
         ) { backStackEntry ->
             val urlArg = backStackEntry.arguments?.getString("url")
-            val index = backStackEntry.arguments?.getInt("index") ?: 0
+            val focusUrl = backStackEntry.arguments?.getString("focusUri") ?: ""
             val test = backStackEntry.arguments?.getBoolean("test") ?: false
             val mimeArg = backStackEntry.arguments?.getString("mimetype")
             val pageSize = backStackEntry.arguments?.getInt("pageSize") ?: 30
-            ImagePreviewScreen(urlArg, index, test, mimeArg, pageSize)
+            ImagePreviewScreen(urlArg, focusUrl, test, mimeArg, pageSize, onBack = { navController.popBackStack() })
         }
     }
 
@@ -54,7 +55,7 @@ class ImagePreviewFeature : Feature {
 }
 
 // 测试模式开关：默认跟随 BuildConfig.DEBUG，也可按需改为常量控制
-private val TEST_MODE_ENABLED = false
+private const val TEST_MODE_ENABLED = false
 
 // 20 张覆盖多尺寸/比例（含 4K/8K、超长、方图、超宽等）的测试图片（picsum 固定尺寸）
 private val TEST_IMAGE_URLS = listOf(
@@ -84,17 +85,24 @@ private val TEST_IMAGE_URLS = listOf(
 @Composable
 private fun ImagePreviewScreen(
     urlArg: String?,
-    startIndex: Int,
+    focusUri: String,
     forceTest: Boolean,
     mimeArg: String?,
     pageSize: Int,
+    onBack: () -> Unit,
 ) {
     val urlsFromArg = remember(urlArg) {
-        urlArg
-            ?.split(',')
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-            ?: emptyList()
+        if (urlArg.isNullOrEmpty()) {
+            emptyList()
+        } else {
+            try {
+                val decoded = java.net.URLDecoder.decode(urlArg, "UTF-8")
+                decoded.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            } catch (e: Exception) {
+                // Fallback to direct split if decode fails
+                urlArg.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            }
+        }
     }
     val context = LocalContext.current
 
@@ -120,7 +128,7 @@ private fun ImagePreviewScreen(
                     Manifest.permission.READ_MEDIA_VIDEO
                 )
             }
-        } else arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+        } else arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
 
     var hasPermissions by remember {
@@ -170,7 +178,13 @@ private fun ImagePreviewScreen(
                 Text("暂无可预览的媒体")
             }
             else -> {
-                ImagePagerScreen(urls = urls, startIndex = startIndex.coerceIn(0, urls.size - 1))
+                val focusIndex = urls.indexOf(focusUri).coerceIn(0, urls.size - 1)
+                Log.d(TAG, "URLs count: ${urls.size}, requested focusIndex: $focusIndex, focusUri:$focusUri, urls:$urls")
+                ImagePagerScreen(
+                    urls = urls,
+                    startIndex = focusIndex,
+                    onBack = onBack
+                )
             }
         }
     }

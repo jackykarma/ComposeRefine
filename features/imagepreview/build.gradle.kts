@@ -34,5 +34,7 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.activity.compose)
     implementation(libs.coil.compose)
+    // Material Icons for back button
+    implementation(libs.androidx.material.icons.extended)
 }
 

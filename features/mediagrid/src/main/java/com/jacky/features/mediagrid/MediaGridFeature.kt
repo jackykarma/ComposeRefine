@@ -1,6 +1,7 @@
 package com.jacky.features.mediagrid
 
 import android.Manifest
+import android.net.Uri
 import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -136,11 +137,12 @@ class MediaGridFeature : Feature {
             MediaGridScreen(
                 mimeArg = mimetype,
                 pageSize = pageSize,
-                onItemClick = { uris, index ->
+                onItemClick = { uris, focusUri ->
                     // 仅将当前已加载页的 URI 列表传给预览，避免超长参数
                     val joined = uris.joinToString(",")
                     val encoded = java.net.URLEncoder.encode(joined, Charsets.UTF_8.name())
-                    navController.navigate("image_preview?url=$encoded&index=$index")
+                    Log.d("MediaGrid", "register: focusUri:$focusUri")
+                    navController.navigate("image_preview?url=$encoded&focusUri=$focusUri")
                 }
             )
         }
@@ -160,7 +162,7 @@ private enum class FilterOption { All, Images, Videos, Live, Favorites }
 private fun MediaGridScreen(
     mimeArg: String,
     pageSize: Int,
-    onItemClick: (uris: List<String>, index: Int) -> Unit,
+    onItemClick: (uris: List<String>, focusUrl: String) -> Unit,
     span: Int = 4,
     spacing: Dp = 2.dp,
 ) {
@@ -341,9 +343,20 @@ private fun MediaGridScreen(
                                                         val window = 60
                                                         val start = maxOf(0, index - window / 2)
                                                         val end = minOf(lpi.itemCount - 1, index + window / 2)
-                                                        val uris = (start..end).mapNotNull { i -> lpi.peek(i)?.uri?.toString() }
-                                                        val adjusted = uris.indexOf(centerUri).coerceAtLeast(0)
-                                                        onItemClick(uris, adjusted)
+
+                                                        // Calculate the target index as offset from window start
+                                                        val targetOffsetInWindow = index - start
+
+                                                        // Build URI list (only include loaded items)
+                                                        val uris = (start..end).mapNotNull { i ->
+                                                            lpi.peek(i)?.uri?.toString()
+                                                        }
+
+                                                        // Use the offset directly, clamped to available range
+                                                        val adjustedIndex = targetOffsetInWindow.coerceIn(0, uris.size - 1)
+
+                                                        android.util.Log.d("MediaGrid", "Clicked index: $index, window: $start-$end, offset: $targetOffsetInWindow, final: $adjustedIndex, uris: ${uris.size}")
+                                                        onItemClick(uris, centerUri)
                                                     },
                                                     modifier = Modifier.fillMaxSize()
                                                 )
