@@ -20,6 +20,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.clipToBounds
+
+import androidx.compose.ui.zIndex
+
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -86,22 +90,23 @@ fun ImagePagerScreen(
 
         HorizontalPager(state = pagerState, userScrollEnabled = allowPagerScroll, modifier = Modifier.fillMaxSize()) { page ->
             val model = urls.getOrNull(page)
-            ZoomableImage(
-                model = model,
-                contentDescription = "Image $page",
-                modifier = Modifier.fillMaxSize(),
-                maxScale = maxScale,
-                onTap = { immersive.value = !immersive.value },
-                onPinchStart = { immersive.value = true },
-                requestPageChange = { delta ->
-                    val target = (pagerState.currentPage + delta).coerceIn(0, pagerState.pageCount - 1)
-                    if (target != pagerState.currentPage) {
-                        scope.launch { pagerState.animateScrollToPage(target) }
-                    }
-                },
-                onAllowPagerScrollChange = { allow -> allowPagerScroll = allow }
-
-            )
+            Box(Modifier.fillMaxSize().clipToBounds()) {
+                ZoomableImage(
+                    model = model,
+                    contentDescription = "Image $page",
+                    modifier = Modifier.fillMaxSize(),
+                    maxScale = maxScale,
+                    onTap = { immersive.value = !immersive.value },
+                    onPinchStart = { immersive.value = true },
+                    requestPageChange = { delta ->
+                        val target = (pagerState.currentPage + delta).coerceIn(0, pagerState.pageCount - 1)
+                        if (target != pagerState.currentPage) {
+                            scope.launch { pagerState.animateScrollToPage(target) }
+                        }
+                    },
+                    onAllowPagerScrollChange = { allow -> allowPagerScroll = allow }
+                )
+            }
         }
 
         // Top bar: full-width background + back button
