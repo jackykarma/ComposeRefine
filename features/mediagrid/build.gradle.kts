@@ -28,6 +28,8 @@ android {
 dependencies {
     implementation(project(":features:feature-api"))
     implementation(project(":features:medialibrary"))
+    implementation(project(":features:imagepreview"))
+
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.material3)

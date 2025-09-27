@@ -134,6 +134,13 @@ fun ImagePagerScreen(
     // 当图片未放大（scale<=1f）时允许 Pager 滑动以实现“边滑边预览”；放大时禁用 Pager 滑动
     var allowPagerScroll by remember { mutableStateOf(true) }
 
+    // Dynamic background alpha: fade in on entry, fade out on exit so that grid beneath is visible
+    val bgAlpha = when {
+        exitOverlayVisible -> 1f - exitProgress.value
+        entryOverlayVisible -> entryProgress.value
+        else -> 1f
+    }
+
     var rootWindowOffset by remember { mutableStateOf(IntOffset(0, 0)) }
 
     Box(Modifier
@@ -143,7 +150,7 @@ fun ImagePagerScreen(
             val p = coords.localToWindow(androidx.compose.ui.geometry.Offset.Zero)
             rootWindowOffset = IntOffset(p.x.toInt(), p.y.toInt())
         }
-        .background(MaterialTheme.colorScheme.background)) {
+        .background(MaterialTheme.colorScheme.background.copy(alpha = bgAlpha))) {
         // Pager
         // Debug: pager allow and scrolling progress
         LaunchedEffect(allowPagerScroll) {
@@ -313,7 +320,7 @@ fun ImagePagerScreen(
         }
         if (exitOverlayVisible && entryStartRectLocal != null && exitStartRectPx != null) {
             val rect = lerpRect(exitStartRectPx, entryStartRectLocal, exitProgress.value)
-            SharedBoundsOverlay(model = urls.getOrNull(pagerState.currentPage), rect = rect, contentScale = ContentScale.Fit)
+            SharedBoundsOverlay(model = urls.getOrNull(pagerState.currentPage), rect = rect, contentScale = ContentScale.Crop)
         }
 
         // Bottom thumbnails with full-width background

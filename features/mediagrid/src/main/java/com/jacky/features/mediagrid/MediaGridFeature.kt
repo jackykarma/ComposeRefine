@@ -114,6 +114,8 @@ import coil.request.ImageRequest
 import com.jacky.compose.feature.api.Feature
 import com.jacky.features.medialibrary.MimeFilter
 import kotlinx.coroutines.delay
+import com.jacky.features.imagepreview.ImagePagerScreen
+
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
@@ -138,47 +140,67 @@ class MediaGridFeature : Feature {
             val pageSize = backStackEntry.arguments?.getInt("pageSize") ?: 60
             // Obtain context once in composable scope; capture into lambda
             val ctx = LocalContext.current
-            MediaGridScreen(
-                mimeArg = mimetype,
-                pageSize = pageSize,
-                onItemClick = { uris, focusUri, startBounds ->
-                    // Prefetch likely-needed bitmaps to improve first-entry visuals
-                    // 1) Prefetch overlay (start bounds) size to match entry overlay request
-                    startBounds?.let { s ->
-                        val size = try {
-                            val p = s.split(',')
-                            Pair(p[2].toInt(), p[3].toInt())
-                        } catch (_: Throwable) { null }
-                        size?.let { (w, h) ->
+
+            // Overlay preview state kept in the same route to ensure grid stays rendered behind
+            var previewVisible by remember { mutableStateOf(false) }
+            var previewUrls by remember { mutableStateOf<List<String>>(emptyList()) }
+            var previewFocusUri by remember { mutableStateOf("") }
+            var previewStartBounds by remember { mutableStateOf<String?>(null) }
+
+            Box(Modifier.fillMaxSize()) {
+                MediaGridScreen(
+                    mimeArg = mimetype,
+                    pageSize = pageSize,
+                    onItemClick = { uris, focusUri, startBounds ->
+                        // Prefetch likely-needed bitmaps to improve first-entry visuals
+                        // 1) Prefetch overlay (start bounds) size to match entry overlay request
+                        startBounds?.let { s ->
+                            val size = try {
+                                val p = s.split(',')
+                                Pair(p[2].toInt(), p[3].toInt())
+                            } catch (_: Throwable) { null }
+                            size?.let { (w, h) ->
+                                val req = coil.request.ImageRequest.Builder(ctx)
+                                    .data(focusUri)
+                                    .size(coil.size.Size(w, h))
+                                    .precision(coil.size.Precision.INEXACT)
+                                    .scale(coil.size.Scale.FILL)
+                                    .build()
+                                coil.Coil.imageLoader(ctx).enqueue(req)
+                            }
+                        }
+                        // 2) Prefetch preview container-ish size (screen size) for low-res Fit layer
+                        run {
+                            val dm = ctx.resources.displayMetrics
                             val req = coil.request.ImageRequest.Builder(ctx)
                                 .data(focusUri)
-                                .size(coil.size.Size(w, h))
+                                .size(coil.size.Size(dm.widthPixels, dm.heightPixels))
                                 .precision(coil.size.Precision.INEXACT)
-                                .scale(coil.size.Scale.FILL)
+                                .scale(coil.size.Scale.FIT)
                                 .build()
                             coil.Coil.imageLoader(ctx).enqueue(req)
                         }
-                    }
-                    // 2) Prefetch preview container-ish size (screen size) for low-res Fit layer
-                    run {
-                        val dm = ctx.resources.displayMetrics
-                        val req = coil.request.ImageRequest.Builder(ctx)
-                            .data(focusUri)
-                            .size(coil.size.Size(dm.widthPixels, dm.heightPixels))
-                            .precision(coil.size.Precision.INEXACT)
-                            .scale(coil.size.Scale.FIT)
-                            .build()
-                        coil.Coil.imageLoader(ctx).enqueue(req)
-                    }
 
-                    // 仅将当前已加载页的 URI 列表传给预览，避免超长参数
-                    val joined = uris.joinToString(",")
-                    val encoded = java.net.URLEncoder.encode(joined, Charsets.UTF_8.name())
-                    val boundsParam = startBounds?.let { "&startBounds=$it" } ?: ""
-                    Log.d("MediaGrid", "register: focusUri:$focusUri, startBounds=$startBounds")
-                    navController.navigate("image_preview?url=$encoded&focusUri=$focusUri$boundsParam")
+                        // Open in overlay
+                        previewUrls = uris
+                        previewFocusUri = focusUri
+                        previewStartBounds = startBounds
+                        previewVisible = true
+                    }
+                )
+
+                if (previewVisible) {
+                    val startIndex = remember(previewUrls, previewFocusUri) {
+                        previewUrls.indexOf(previewFocusUri).coerceIn(0, previewUrls.lastIndex)
+                    }
+                    ImagePagerScreen(
+                        urls = previewUrls,
+                        startIndex = startIndex,
+                        onBack = { previewVisible = false },
+                        entryStartBounds = previewStartBounds
+                    )
                 }
-            )
+            }
         }
     }
 
