@@ -66,11 +66,25 @@ fun ImagePagerScreen(
         }
     }
 
+    // 当图片未放大（scale<=1f）时允许 Pager 滑动以实现“边滑边预览”；放大时禁用 Pager 滑动
+    var allowPagerScroll by remember { mutableStateOf(true) }
+
     Box(Modifier
         .fillMaxSize()
         .background(MaterialTheme.colorScheme.background)) {
         // Pager
-        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+        // Debug: pager allow and scrolling progress
+        LaunchedEffect(allowPagerScroll) {
+            Log.d(TAG, "ImagePagerScreen: allowPagerScroll=$allowPagerScroll")
+        }
+        LaunchedEffect(pagerState) {
+            snapshotFlow { Triple(pagerState.currentPage, pagerState.currentPageOffsetFraction, pagerState.isScrollInProgress) }
+                .collectLatest { (page, offset, inProgress) ->
+                    Log.d(TAG, "ImagePagerScreen: pager page=$page, offset=$offset, scrolling=$inProgress")
+                }
+        }
+
+        HorizontalPager(state = pagerState, userScrollEnabled = allowPagerScroll, modifier = Modifier.fillMaxSize()) { page ->
             val model = urls.getOrNull(page)
             ZoomableImage(
                 model = model,
@@ -84,7 +98,9 @@ fun ImagePagerScreen(
                     if (target != pagerState.currentPage) {
                         scope.launch { pagerState.animateScrollToPage(target) }
                     }
-                }
+                },
+                onAllowPagerScrollChange = { allow -> allowPagerScroll = allow }
+
             )
         }
 
@@ -99,6 +115,7 @@ fun ImagePagerScreen(
                 Box(
                     modifier = Modifier
                         .statusBarsPadding()
+
                         .padding(horizontal = 8.dp, vertical = 8.dp)
                 ) {
                     IconButton(onClick = onBack) {

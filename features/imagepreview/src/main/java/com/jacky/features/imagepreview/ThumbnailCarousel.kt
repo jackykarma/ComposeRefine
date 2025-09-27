@@ -63,7 +63,7 @@ fun ThumbnailCarousel(
     baseSpacing: Dp = 1.5.dp,
     heightWidthAspect: Float = 1.6f,          // 宽:高 = 1 : heightFactor
     centerWidthScale: Float = 1.6f,      // 焦点项宽度放大倍数（仅宽度）
-    centerGutterScale: Float = 3.0f      // 焦点项左右可见间距 = baseSpacing * centerGutterScale
+    centerGutterScale: Float = 6.0f      // 焦点项左右可见间距 = baseSpacing * centerGutterScale
 ) {
     val density = LocalDensity.current
     val listState = rememberLazyListState()
