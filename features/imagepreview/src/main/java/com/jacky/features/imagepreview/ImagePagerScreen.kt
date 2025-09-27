@@ -54,7 +54,7 @@ import androidx.compose.material.icons.Icons
  * 预览大图分页组件（覆盖在媒体网格列表之上）。
  *
  * 功能概述：
- * - 入场共享边界：从列表缩略图的 bounds 动画到预览初始位置；入场期间隐藏上下菜单；背景由 0->1 渐显。
+ * - 入场共享边界：从列表缩略图的 bounds 动画到预览初始位置；入场期间上下菜单“直接显示”；背景由 0->1 渐显。
  * - 交互预览：支持左右分页预览；图片可缩放/拖拽（放大态时禁用左右分页以避免冲突）。
  * - 下拉返回（非放大态）：垂直拖拽时图片随距离轻微缩小，背景按距离逐步变透明；松手后若超过阈值则触发反向共享边界动画缩回列表项，否则回弹复位。
  * - 退出共享边界：反向动画使用 ContentScale.Crop，确保回到列表缩图时 1:1 贴合无留边；退出过程中背景 1->0 渐隐。
@@ -294,6 +294,7 @@ fun ImagePagerScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .alpha(controlsAlpha)
+                    .zIndex(20f)
             ) {
                 Box(
                     modifier = Modifier
@@ -348,12 +349,11 @@ fun ImagePagerScreen(
 
                 val endOk = entryEndRectPx != null
                 if (endOk) {
-                    immersive.value = true
+                    // 入场时不再切换“沉浸”状态，以避免影响底层列表布局；上下控件直接显示
                     entryProgress.snapTo(0f)
                     entryRan = true
                     entryProgress.animateTo(1f, tween(280))
                     entryOverlayVisible = false
-                    immersive.value = false
                 }
             }
         }
@@ -388,6 +388,7 @@ fun ImagePagerScreen(
                 .align(Alignment.BottomCenter)
                 .height(64.dp)
                 .alpha(controlsAlpha)
+                .zIndex(20f)
         ) {
             Box(
                 modifier = Modifier
