@@ -1,6 +1,13 @@
 package com.jacky.features.imagepreview
 
 import android.util.Log
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.IntOffset
+
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -23,6 +30,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.clipToBounds
 
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.layout.ContentScale
+
 
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -31,14 +43,56 @@ import androidx.compose.material.icons.Icons
 
 @Composable
 fun ImagePagerScreen(
+
     urls: List<String>,
     startIndex: Int = 0,
     maxScale: Float = 3f,
     onBack: (() -> Unit)? = null,
+    entryStartBounds: String? = null,
 ) {
     val pagerState = rememberPagerState(initialPage = startIndex, pageCount = { urls.size.coerceAtLeast(1) })
     val immersive = rememberImmersiveController(initial = false)
+    // Container and current image info for transitions/dismiss logic
+    var containerSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    var currentImageSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    var currentScale by remember { mutableFloatStateOf(1f) }
+
+    // Entry shared-bounds transition
+    val startBoundsStr = remember(entryStartBounds) { entryStartBounds?.takeIf { it.isNotBlank() } }
+    val entryStartRectPx = remember(startBoundsStr) { parseBounds(startBoundsStr) }
+    var entryOverlayVisible by remember { mutableStateOf(entryStartRectPx != null) }
     val scope = rememberCoroutineScope()
+
+    val entryProgress = remember { androidx.compose.animation.core.Animatable(0f) }
+
+    // Exit reverse transition trigger
+    var exitOverlayVisible by remember { mutableStateOf(false) }
+    val exitProgress = remember { androidx.compose.animation.core.Animatable(0f) }
+
+    // Drag-to-dismiss
+    val density = LocalDensity.current
+    val dismissThresholdPx = with(density) { 120.dp.toPx() }
+    // Handle normal back: when not immersive, perform reverse animation to grid (if possible)
+    if (onBack != null) {
+        BackHandler(enabled = !immersive.value) {
+            scope.launch {
+                if (entryStartRectPx != null) {
+                    exitOverlayVisible = true
+                    immersive.value = true
+                    exitProgress.snapTo(0f)
+                    exitProgress.animateTo(1f, tween(260))
+                    onBack()
+                } else {
+                    onBack()
+                }
+            }
+        }
+    }
+
+    var dragY by remember { mutableFloatStateOf(0f) }
+    var dragging by remember { mutableStateOf(false) }
+
+
 
     ImmersiveSystemBarsEffect(immersive = immersive.value)
     ImmersiveBackHandler(immersive)
@@ -75,6 +129,7 @@ fun ImagePagerScreen(
 
     Box(Modifier
         .fillMaxSize()
+        .onSizeChanged { containerSize = it }
         .background(MaterialTheme.colorScheme.background)) {
         // Pager
         // Debug: pager allow and scrolling progress
@@ -88,7 +143,51 @@ fun ImagePagerScreen(
                 }
         }
 
-        HorizontalPager(state = pagerState, userScrollEnabled = allowPagerScroll, modifier = Modifier.fillMaxSize()) { page ->
+        HorizontalPager(state = pagerState, userScrollEnabled = allowPagerScroll, modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer { translationY = dragY }
+            .pointerInput(currentScale, dismissThresholdPx) {
+                detectDragGestures(
+                    onDragStart = {
+                        if (currentScale <= 1f) {
+                            dragging = true
+                            immersive.value = true
+                        }
+                    },
+                    onDragEnd = {
+                        val absY = kotlin.math.abs(dragY)
+                        if (dragging && absY > dismissThresholdPx) {
+                            // Trigger exit reverse animation
+                            scope.launch {
+                                if (onBack != null) {
+                                    if (entryStartRectPx != null) {
+                                        exitOverlayVisible = true
+                                        immersive.value = true
+                                        exitProgress.snapTo(0f)
+                                        exitProgress.animateTo(1f, tween(260))
+                                        onBack()
+                                    } else {
+                                        onBack()
+                                    }
+                                }
+                            }
+                        } else {
+                            // Restore
+                            scope.launch { Animatable(dragY).animateTo(0f) { dragY = value } }
+                            immersive.value = false
+                        }
+                        dragging = false
+                    },
+                ) { change, dragAmount ->
+                    if (!dragging && currentScale > 1f) return@detectDragGestures
+                    if (kotlin.math.abs(dragAmount.y) >= kotlin.math.abs(dragAmount.x)) {
+                        dragY += dragAmount.y
+                        change.consume()
+                    }
+                }
+            }
+        ) { page ->
+
             val model = urls.getOrNull(page)
             Box(Modifier.fillMaxSize().clipToBounds()) {
                 ZoomableImage(
@@ -104,7 +203,9 @@ fun ImagePagerScreen(
                             scope.launch { pagerState.animateScrollToPage(target) }
                         }
                     },
-                    onAllowPagerScrollChange = { allow -> allowPagerScroll = allow }
+                    onAllowPagerScrollChange = { allow -> allowPagerScroll = allow },
+                    onLowResLoaded = { size -> if (page == pagerState.currentPage) currentImageSize = size },
+                    onScaleChanged = { s -> if (page == pagerState.currentPage) currentScale = s }
                 )
             }
         }
@@ -134,10 +235,42 @@ fun ImagePagerScreen(
             }
         }
 
+        // Entry shared bounds overlay and animation
+        val entryEndRectPx = remember(containerSize, currentImageSize) {
+            if (containerSize.width > 0 && containerSize.height > 0 && currentImageSize.width > 0 && currentImageSize.height > 0) {
+                fitRectPx(containerSize, currentImageSize)
+            } else null
+        }
+        LaunchedEffect(entryOverlayVisible, entryEndRectPx) {
+            if (entryOverlayVisible && entryStartRectPx != null && entryEndRectPx != null) {
+                immersive.value = true
+                entryProgress.snapTo(0f)
+                entryProgress.animateTo(1f, tween(280))
+                entryOverlayVisible = false
+                immersive.value = false
+            }
+        }
+        if (entryOverlayVisible && entryStartRectPx != null) {
+            val rect = if (entryEndRectPx != null) lerpRect(entryStartRectPx, entryEndRectPx, entryProgress.value) else entryStartRectPx
+            SharedBoundsOverlay(model = urls.getOrNull(startIndex), rect = rect)
+        }
+
+        // Exit reverse overlay
+        val exitStartRectPx = remember(containerSize, currentImageSize) {
+            if (containerSize.width > 0 && containerSize.height > 0 && currentImageSize.width > 0 && currentImageSize.height > 0) {
+                fitRectPx(containerSize, currentImageSize)
+            } else null
+        }
+        if (exitOverlayVisible && entryStartRectPx != null && exitStartRectPx != null) {
+            val rect = lerpRect(exitStartRectPx, entryStartRectPx, exitProgress.value)
+            SharedBoundsOverlay(model = urls.getOrNull(pagerState.currentPage), rect = rect)
+        }
+
         // Bottom thumbnails with full-width background
         Surface(
             color = MaterialTheme.colorScheme.surface,
             modifier = Modifier
+
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .height(64.dp)
@@ -163,6 +296,8 @@ fun ImagePagerScreen(
             }
         }
 
+
+
         // Sync: when pager settles, center thumbnails
         LaunchedEffect(pagerState) {
             snapshotFlow { pagerState.currentPage to pagerState.isScrollInProgress }
@@ -183,3 +318,60 @@ fun ImagePagerScreen(
     }
 }
 
+
+
+// Helpers
+private data class BoundsPx(val l: Int, val t: Int, val w: Int, val h: Int)
+
+private fun parseBounds(s: String?): BoundsPx? {
+    if (s.isNullOrBlank()) return null
+    return try {
+        val parts = s.split(',').map { it.trim() }
+        if (parts.size >= 4) BoundsPx(parts[0].toInt(), parts[1].toInt(), parts[2].toInt(), parts[3].toInt()) else null
+    } catch (_: Throwable) { null }
+}
+
+private fun fitRectPx(container: IntSize, image: IntSize): BoundsPx {
+    val cw = container.width.toFloat().coerceAtLeast(1f)
+    val ch = container.height.toFloat().coerceAtLeast(1f)
+    val iw = image.width.toFloat().coerceAtLeast(1f)
+    val ih = image.height.toFloat().coerceAtLeast(1f)
+    val scale = kotlin.math.min(cw / iw, ch / ih)
+    val w = (iw * scale).toInt()
+    val h = (ih * scale).toInt()
+    val l = ((cw - w) / 2f).toInt()
+    val t = ((ch - h) / 2f).toInt()
+    return BoundsPx(l, t, w, h)
+}
+
+private fun lerpRect(a: BoundsPx, b: BoundsPx, p: Float): BoundsPx {
+    val t = p.coerceIn(0f, 1f)
+    fun lerpInt(x: Int, y: Int): Int = (x + (y - x) * t).toInt()
+    return BoundsPx(
+        l = lerpInt(a.l, b.l),
+        t = lerpInt(a.t, b.t),
+        w = lerpInt(a.w, b.w),
+        h = lerpInt(a.h, b.h)
+    )
+}
+
+@Composable
+private fun BoxScope.SharedBoundsOverlay(model: String?, rect: BoundsPx) {
+    val density = LocalDensity.current
+    val wDp = with(density) { rect.w.toDp() }
+    val hDp = with(density) { rect.h.toDp() }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .zIndex(10f)
+    ) {
+        coil.compose.AsyncImage(
+            model = model,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .offset { IntOffset(rect.l, rect.t) }
+                .size(wDp, hDp)
+        )
+    }
+}

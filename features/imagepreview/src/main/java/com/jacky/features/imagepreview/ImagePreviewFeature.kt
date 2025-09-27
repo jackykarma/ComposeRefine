@@ -31,13 +31,14 @@ class ImagePreviewFeature : Feature {
 
     override fun register(navGraphBuilder: NavGraphBuilder, navController: NavHostController) {
         navGraphBuilder.composable(
-            route = "$ROUTE?url={url}&focusUri={focusUri}&test={test}&mimetype={mimetype}&pageSize={pageSize}",
+            route = "$ROUTE?url={url}&focusUri={focusUri}&test={test}&mimetype={mimetype}&pageSize={pageSize}&startBounds={startBounds}",
             arguments = listOf(
                 navArgument("url") { type = NavType.StringType; nullable = true },
                 navArgument("focusUri") { type = NavType.StringType; defaultValue = "" },
                 navArgument("test") { type = NavType.BoolType; defaultValue = false },
                 navArgument("mimetype") { type = NavType.StringType; defaultValue = "image" },
-                navArgument("pageSize") { type = NavType.IntType; defaultValue = 30 }
+                navArgument("pageSize") { type = NavType.IntType; defaultValue = 30 },
+                navArgument("startBounds") { type = NavType.StringType; defaultValue = "" }
             )
         ) { backStackEntry ->
             val urlArg = backStackEntry.arguments?.getString("url")
@@ -45,7 +46,8 @@ class ImagePreviewFeature : Feature {
             val test = backStackEntry.arguments?.getBoolean("test") ?: false
             val mimeArg = backStackEntry.arguments?.getString("mimetype")
             val pageSize = backStackEntry.arguments?.getInt("pageSize") ?: 30
-            ImagePreviewScreen(urlArg, focusUrl, test, mimeArg, pageSize, onBack = { navController.popBackStack() })
+            val startBounds = backStackEntry.arguments?.getString("startBounds")
+            ImagePreviewScreen(urlArg, focusUrl, test, mimeArg, pageSize, startBounds, onBack = { navController.popBackStack() })
         }
     }
 
@@ -89,6 +91,7 @@ private fun ImagePreviewScreen(
     forceTest: Boolean,
     mimeArg: String?,
     pageSize: Int,
+    startBounds: String?,
     onBack: () -> Unit,
 ) {
     val urlsFromArg = remember(urlArg) {
@@ -183,7 +186,8 @@ private fun ImagePreviewScreen(
                 ImagePagerScreen(
                     urls = urls,
                     startIndex = focusIndex,
-                    onBack = onBack
+                    onBack = onBack,
+                    entryStartBounds = startBounds
                 )
             }
         }

@@ -86,6 +86,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.geometry.Offset
+
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -137,12 +139,13 @@ class MediaGridFeature : Feature {
             MediaGridScreen(
                 mimeArg = mimetype,
                 pageSize = pageSize,
-                onItemClick = { uris, focusUri ->
+                onItemClick = { uris, focusUri, startBounds ->
                     // 仅将当前已加载页的 URI 列表传给预览，避免超长参数
                     val joined = uris.joinToString(",")
                     val encoded = java.net.URLEncoder.encode(joined, Charsets.UTF_8.name())
-                    Log.d("MediaGrid", "register: focusUri:$focusUri")
-                    navController.navigate("image_preview?url=$encoded&focusUri=$focusUri")
+                    val boundsParam = startBounds?.let { "&startBounds=$it" } ?: ""
+                    Log.d("MediaGrid", "register: focusUri:$focusUri, startBounds=$startBounds")
+                    navController.navigate("image_preview?url=$encoded&focusUri=$focusUri$boundsParam")
                 }
             )
         }
@@ -162,7 +165,7 @@ private enum class FilterOption { All, Images, Videos, Live, Favorites }
 private fun MediaGridScreen(
     mimeArg: String,
     pageSize: Int,
-    onItemClick: (uris: List<String>, focusUrl: String) -> Unit,
+    onItemClick: (uris: List<String>, focusUrl: String, startBounds: String?) -> Unit,
     span: Int = 4,
     spacing: Dp = 2.dp,
 ) {
@@ -323,6 +326,8 @@ private fun MediaGridScreen(
                                             lpi.peek(index)?.uri?.toString() ?: index.toString()
                                         }
                                     ) { index ->
+                                        var thumbBoundsStr by remember { mutableStateOf<String?>(null) }
+
                                         val asset = lpi[index]
                                         Box(
                                             modifier = Modifier
@@ -356,9 +361,15 @@ private fun MediaGridScreen(
                                                         val adjustedIndex = targetOffsetInWindow.coerceIn(0, uris.size - 1)
 
                                                         android.util.Log.d("MediaGrid", "Clicked index: $index, window: $start-$end, offset: $targetOffsetInWindow, final: $adjustedIndex, uris: ${uris.size}")
-                                                        onItemClick(uris, centerUri)
+                                                        onItemClick(uris, centerUri, thumbBoundsStr)
                                                     },
-                                                    modifier = Modifier.fillMaxSize()
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .onGloballyPositioned { coords ->
+                                                            val pos = coords.localToWindow(Offset.Zero)
+                                                            val size = coords.size
+                                                            thumbBoundsStr = "${pos.x.toInt()},${pos.y.toInt()},${size.width},${size.height}"
+                                                        }
                                                 )
                                             } else {
                                                 Box(
