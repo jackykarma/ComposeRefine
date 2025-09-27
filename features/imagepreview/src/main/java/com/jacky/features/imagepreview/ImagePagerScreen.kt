@@ -79,20 +79,20 @@ fun ImagePagerScreen(
     maxScale: Float = 3f,
     onBack: (() -> Unit)? = null,
     entryStartBounds: String? = null,
-    // Drag behavior tuning
-    dragAlphaFactor: Float = 0.6f,            // 0..1, larger -> alpha下降更快
+    // 下拉/返回相关的可调参数
+    dragAlphaFactor: Float = 0.6f,            // 0..1，数值越大透明度下降更快
     maxDragScaleReduction: Float = 0.30f,     // 0..1, 0.30 = 最多缩小到 70%
     dragEasingPower: Float = 3f,              // 2=二次,3=三次, 数值越大前段越慢
     dismissThresholdDp: Dp = 32.dp            // 触发返回的下拉距离阈值（更小=更容易触发）
 ) {
     val pagerState = rememberPagerState(initialPage = startIndex, pageCount = { urls.size.coerceAtLeast(1) })
     val immersive = rememberImmersiveController(initial = false)
-    // Container and current image info for transitions/dismiss logic
+    // 容器尺寸/当前图片信息：用于过渡与下拉返回逻辑
     var containerSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     var currentImageSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     var currentScale by remember { mutableFloatStateOf(1f) }
 
-    // Entry shared-bounds transition
+    // 入场共享边界过渡
     val startBoundsStr = remember(entryStartBounds) { entryStartBounds?.takeIf { it.isNotBlank() } }
     val entryStartRectPx: BoundsPx? = remember(startBoundsStr) { parseBounds(startBoundsStr) }
     var entryOverlayVisible by remember { mutableStateOf(entryStartRectPx != null) }
@@ -100,27 +100,34 @@ fun ImagePagerScreen(
 
     val entryProgress = remember { androidx.compose.animation.core.Animatable(0f) }
 
-    // Exit reverse transition trigger
+    // 退出反向过渡触发器
     var exitOverlayVisible by remember { mutableStateOf(false) }
     val exitProgress = remember { androidx.compose.animation.core.Animatable(0f) }
 
-    // Drag-to-dismiss
-    val density = LocalDensity.current
-    val dismissThresholdPx = with(density) { dismissThresholdDp.toPx() }
-    // Handle normal back: when not immersive, perform reverse animation to grid (if possible)
-    if (onBack != null) {
-        BackHandler(enabled = !immersive.value) {
+    // 统一的“触发退出共享边界动画”逻辑（供系统返回键与顶部返回键复用）
+    val triggerExit: (() -> Unit)? = onBack?.let {
+        {
             scope.launch {
                 if (entryStartRectPx != null) {
                     exitOverlayVisible = true
                     immersive.value = true
                     exitProgress.snapTo(0f)
                     exitProgress.animateTo(1f, tween(260))
-                    onBack()
+                    it()
                 } else {
-                    onBack()
+                    it()
                 }
             }
+        }
+    }
+
+    // 下拉拖拽退出
+    val density = LocalDensity.current
+    val dismissThresholdPx = with(density) { dismissThresholdDp.toPx() }
+    // 处理系统返回：非沉浸态时，触发反向共享边界动画返回到网格
+    if (onBack != null) {
+        BackHandler(enabled = !immersive.value) {
+            triggerExit?.invoke()
         }
     }
 
@@ -129,29 +136,26 @@ fun ImagePagerScreen(
 
 
 
-    ImmersiveSystemBarsEffect(immersive = immersive.value)
-    ImmersiveBackHandler(immersive)
-
-    // Controls alpha (back + thumbnails)
+    // 控制栏透明度（返回按钮 + 底部缩略图）
     val controlsAlpha by animateFloatAsState(targetValue = if (immersive.value) 0f else 1f, label = "controls_alpha")
 
-    // Thumbnail center sync state
+    // 缩略图居中同步状态
     var centeredThumbIndex by remember { mutableIntStateOf(startIndex.coerceIn(0, urls.lastIndex)) }
 
-    // Track the current selected index for thumbnail carousel
+    // 跟踪当前选中的缩略图索引
     var thumbnailSelectedIndex by remember { mutableIntStateOf(startIndex.coerceIn(0, urls.lastIndex)) }
     Log.d(TAG, "ImagePagerScreen: thumbnailSelectedIndex:$thumbnailSelectedIndex")
 
-    // Track if we're in the initial setup phase
+    // 标记是否处于初始设置阶段
     var isInitialized by remember { mutableStateOf(false) }
 
-    // Update thumbnail selected index when pager state changes
+    // 在分页状态变化时更新缩略图选中索引
     LaunchedEffect(pagerState.currentPage) {
         Log.d(TAG, "ImagePagerScreen: thumbnailSelectedIndex:$thumbnailSelectedIndex, pagerState.currentPage:${pagerState.currentPage}")
         thumbnailSelectedIndex = pagerState.currentPage
     }
 
-    // Mark as initialized after the pager has settled on the correct initial page
+    // 当 Pager 稳定在初始页后标记初始化完成
     LaunchedEffect(pagerState.currentPage, pagerState.isScrollInProgress) {
         if (!pagerState.isScrollInProgress && pagerState.currentPage == startIndex) {
             isInitialized = true
@@ -194,8 +198,8 @@ fun ImagePagerScreen(
             rootWindowOffset = IntOffset(p.x.toInt(), p.y.toInt())
         }
         .background(MaterialTheme.colorScheme.background.copy(alpha = bgAlpha))) {
-        // Pager
-        // Debug: pager allow and scrolling progress
+        // 图片分页区域
+        // 调试：分页可滚动状态与滚动进度
         LaunchedEffect(allowPagerScroll) {
             Log.d(TAG, "ImagePagerScreen: allowPagerScroll=$allowPagerScroll")
         }
@@ -230,7 +234,7 @@ fun ImagePagerScreen(
                     onDragEnd = {
                         val absY = kotlin.math.abs(dragY)
                         if (dragging && absY > dismissThresholdPx) {
-                            // Trigger exit reverse animation
+                            // 触发反向共享边界退出动画
                             scope.launch {
                                 if (onBack != null) {
                                     if (entryStartRectPx != null) {
@@ -245,7 +249,7 @@ fun ImagePagerScreen(
                                 }
                             }
                         } else {
-                            // Restore
+                            // 回弹复位
                             scope.launch { Animatable(dragY).animateTo(0f) { dragY = value } }
                             immersive.value = false
                         }
@@ -283,7 +287,7 @@ fun ImagePagerScreen(
             }
         }
 
-        // Top bar: full-width background + back button
+        // 顶部栏：铺满背景 + 返回按钮
         if (onBack != null) {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
@@ -297,7 +301,7 @@ fun ImagePagerScreen(
 
                         .padding(horizontal = 8.dp, vertical = 8.dp)
                 ) {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = { triggerExit?.invoke() }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "返回",
@@ -308,12 +312,12 @@ fun ImagePagerScreen(
             }
         }
 
-        // Convert start bounds from window to local coordinates of this Box
+        // 将窗口坐标的起始 bounds 转换为当前 Box 的本地坐标
         val entryStartRectLocal = remember(entryStartRectPx, rootWindowOffset) {
             entryStartRectPx?.offset(-rootWindowOffset.x, -rootWindowOffset.y)
         }
 
-        // Compute end rect: prefer fit-to-container if image size known; otherwise fallback to full container
+        // 计算终点矩形：优先按图片尺寸适配容器，否则回退为铺满容器
         val entryEndIsFallback = remember(containerSize, currentImageSize) {
             containerSize.width > 0 && containerSize.height > 0 && (currentImageSize.width == 0 || currentImageSize.height == 0)
         }
@@ -327,14 +331,14 @@ fun ImagePagerScreen(
             } else null
         }
 
-        // Entry shared bounds overlay and animation
+        // 入场共享边界覆盖层与动画
         var entryRan by remember { mutableStateOf(false) }
         LaunchedEffect(entryOverlayVisible, startBoundsStr, containerSize, currentImageSize) {
             if (entryOverlayVisible && !entryRan) {
-                // Ensure start rect and container ready
+                // 确保起点矩形与容器已就绪
                 if (entryStartRectLocal == null || containerSize.width == 0 || containerSize.height == 0) return@LaunchedEffect
 
-                // If measured size is not yet available, wait a short timeout
+                // 若图片尺寸尚未就绪，短暂等待
                 if (currentImageSize.width == 0 || currentImageSize.height == 0) {
                     withTimeoutOrNull(250) {
                         snapshotFlow { currentImageSize }
@@ -356,11 +360,11 @@ fun ImagePagerScreen(
 
         if (entryOverlayVisible && entryStartRectLocal != null) {
             val rect = if (entryEndRectPx != null) lerpRect(entryStartRectLocal, entryEndRectPx, entryProgress.value) else entryStartRectLocal
-            // Use Crop during entry to ensure the overlay always fills the rect (matches grid item visual)
+            // 入场阶段使用 Crop，确保覆盖层铺满矩形（与列表缩略图视觉一致）
             SharedBoundsOverlay(model = urls.getOrNull(startIndex), rect = rect, contentScale = ContentScale.Crop)
         }
 
-        // Exit reverse overlay
+        // 退出反向覆盖层
         val exitStartRectPx = remember(containerSize, currentImageSize) {
             if (containerSize.width > 0 && containerSize.height > 0) {
                 if (currentImageSize.width > 0 && currentImageSize.height > 0) {
@@ -375,7 +379,7 @@ fun ImagePagerScreen(
             SharedBoundsOverlay(model = urls.getOrNull(pagerState.currentPage), rect = rect, contentScale = ContentScale.Crop)
         }
 
-        // Bottom thumbnails with full-width background
+        // 底部缩略图区域（铺满背景）
         Surface(
             color = MaterialTheme.colorScheme.surface,
             modifier = Modifier
@@ -407,7 +411,7 @@ fun ImagePagerScreen(
 
 
 
-        // Sync: when pager settles, center thumbnails
+        // 同步：当 Pager 停止滚动时，令缩略图居中到当前页
         LaunchedEffect(pagerState) {
             snapshotFlow { pagerState.currentPage to pagerState.isScrollInProgress }
                 .collectLatest { (page, inProgress) ->
@@ -416,8 +420,8 @@ fun ImagePagerScreen(
                     }
                 }
         }
-        // Sync: when thumbnails center changes (and pager idle), page to it
-        // Only respond to thumbnail changes after initial setup is complete
+        // 同步：当缩略图居中索引变化（且 Pager 空闲）时，切换到该页
+        // 仅在完成初始化后响应缩略图变更
         LaunchedEffect(centeredThumbIndex, isInitialized) {
             if (isInitialized && !pagerState.isScrollInProgress && centeredThumbIndex != pagerState.currentPage) {
                 Log.d(TAG, "ImagePagerScreen: thumbnail triggered page change to $centeredThumbIndex")
@@ -429,7 +433,7 @@ fun ImagePagerScreen(
 
 
 
-// Helpers
+// 工具方法
 private data class BoundsPx(val l: Int, val t: Int, val w: Int, val h: Int)
 
 private fun parseBounds(s: String?): BoundsPx? {
