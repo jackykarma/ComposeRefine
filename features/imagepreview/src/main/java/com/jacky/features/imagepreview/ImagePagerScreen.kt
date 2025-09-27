@@ -27,6 +27,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+
 import androidx.compose.ui.draw.clipToBounds
 
 import androidx.compose.ui.zIndex
@@ -48,6 +50,27 @@ import kotlinx.coroutines.flow.first
 import androidx.compose.material.icons.Icons
 
 
+/**
+ * 预览大图分页组件（覆盖在媒体网格列表之上）。
+ *
+ * 功能概述：
+ * - 入场共享边界：从列表缩略图的 bounds 动画到预览初始位置；入场期间隐藏上下菜单；背景由 0->1 渐显。
+ * - 交互预览：支持左右分页预览；图片可缩放/拖拽（放大态时禁用左右分页以避免冲突）。
+ * - 下拉返回（非放大态）：垂直拖拽时图片随距离轻微缩小，背景按距离逐步变透明；松手后若超过阈值则触发反向共享边界动画缩回列表项，否则回弹复位。
+ * - 退出共享边界：反向动画使用 ContentScale.Crop，确保回到列表缩图时 1:1 贴合无留边；退出过程中背景 1->0 渐隐。
+ *
+ * 参数说明：
+ * @param urls                需要预览的图片 URL 列表
+ * @param startIndex          初始展示的页索引
+ * @param maxScale            单张图片的最大缩放倍数（例如 3f）
+ * @param onBack              退出回调；在反向动画结束后调用，用于关闭 overlay
+ * @param entryStartBounds    入场起点的窗口坐标 bounds（字符串编码），用于共享边界过渡
+ * @param dragAlphaFactor     下拉时背景透明度衰减系数（0..1，越大越快变透明）
+ * @param maxDragScaleReduction 下拉时图片最大缩放收缩比例（0..1，0.30 = 最多缩到 70%）
+ * @param dragEasingPower     下拉缓动幂次（2=二次，3=三次，数值越大前半段越慢、越温和）
+ * @param dismissThresholdDp  触发返回的垂直拖拽距离阈值（dp，越小越容易触发）
+ */
+
 @Composable
 fun ImagePagerScreen(
 
@@ -56,6 +79,11 @@ fun ImagePagerScreen(
     maxScale: Float = 3f,
     onBack: (() -> Unit)? = null,
     entryStartBounds: String? = null,
+    // Drag behavior tuning
+    dragAlphaFactor: Float = 0.6f,            // 0..1, larger -> alpha下降更快
+    maxDragScaleReduction: Float = 0.30f,     // 0..1, 0.30 = 最多缩小到 70%
+    dragEasingPower: Float = 3f,              // 2=二次,3=三次, 数值越大前段越慢
+    dismissThresholdDp: Dp = 32.dp            // 触发返回的下拉距离阈值（更小=更容易触发）
 ) {
     val pagerState = rememberPagerState(initialPage = startIndex, pageCount = { urls.size.coerceAtLeast(1) })
     val immersive = rememberImmersiveController(initial = false)
@@ -78,7 +106,7 @@ fun ImagePagerScreen(
 
     // Drag-to-dismiss
     val density = LocalDensity.current
-    val dismissThresholdPx = with(density) { 120.dp.toPx() }
+    val dismissThresholdPx = with(density) { dismissThresholdDp.toPx() }
     // Handle normal back: when not immersive, perform reverse animation to grid (if possible)
     if (onBack != null) {
         BackHandler(enabled = !immersive.value) {
@@ -134,12 +162,21 @@ fun ImagePagerScreen(
     // 当图片未放大（scale<=1f）时允许 Pager 滑动以实现“边滑边预览”；放大时禁用 Pager 滑动
     var allowPagerScroll by remember { mutableStateOf(true) }
 
-    // Dynamic background alpha: fade in on entry, fade out on exit so that grid beneath is visible
-    val bgAlpha = when {
+    // 下拉交互相关的实时系数：
+    // 1) dragFraction：基于垂直拖拽距离与阈值（像素）计算的 0..1 进度；仅在 dragging=true 时生效
+    // 2) easedDrag：对 dragFraction 施加幂次缓动（dragEasingPower），使前半段更温和、后半段更明显
+    // 3) baseAlpha：页面背景的基础透明度——入场阶段 0->1、退出阶段 1->0、普通态为 1
+    // 4) bgAlpha：叠加“下拉导致的额外透明度”后得到的最终背景透明度；dragAlphaFactor 决定透明度下降速度
+    // 5) dragScale：根据 easedDrag 将图片按比例缩小；maxDragScaleReduction 控制最大缩放收缩比例
+    val dragFraction = if (dragging) (kotlin.math.abs(dragY) / dismissThresholdPx).coerceIn(0f, 1f) else 0f
+    val easedDrag = powf(dragFraction, dragEasingPower)
+    val baseAlpha = when {
         exitOverlayVisible -> 1f - exitProgress.value
         entryOverlayVisible -> entryProgress.value
         else -> 1f
     }
+    val bgAlpha = (baseAlpha * (1f - dragAlphaFactor * easedDrag)).coerceIn(0f, 1f)
+    val dragScale = 1f - maxDragScaleReduction * easedDrag
 
     var rootWindowOffset by remember { mutableStateOf(IntOffset(0, 0)) }
 
@@ -148,6 +185,12 @@ fun ImagePagerScreen(
         .onSizeChanged { containerSize = it }
         .onGloballyPositioned { coords ->
             val p = coords.localToWindow(androidx.compose.ui.geometry.Offset.Zero)
+            //
+            // 拖拽手势规则（仅在当前图片未放大/未旋转等复杂变换时启用下拉返回）：
+            // - 仅统计“纵向占优”的拖拽（|dy| >= |dx|），避免与左右分页冲突
+            // - dismissThresholdPx 来自 dismissThresholdDp（dp -> px），用于“触发返回”的距离判断
+            // - 过程内实时更新 dragY；松手时根据 |dragY| 与阈值比较来决定“回弹”还是“触发返回”
+
             rootWindowOffset = IntOffset(p.x.toInt(), p.y.toInt())
         }
         .background(MaterialTheme.colorScheme.background.copy(alpha = bgAlpha))) {
@@ -166,7 +209,16 @@ fun ImagePagerScreen(
         HorizontalPager(state = pagerState, userScrollEnabled = allowPagerScroll, modifier = Modifier
             .fillMaxSize()
             .alpha(if (entryOverlayVisible || exitOverlayVisible) 0f else 1f)
-            .graphicsLayer { translationY = dragY }
+            .graphicsLayer {
+            // 下拉手势检测：
+            // - onDragStart：仅在 currentScale<=1f（未放大）时进入“下拉模式”，并暂时开启沉浸以免系统栏闪动
+            // - onDrag：仅处理纵向占优的拖拽，累加 dragY；消费事件以避免传递给分页
+            // - onDragEnd：|dragY| > dismissThresholdPx 时触发退出动画，否则回弹到原位
+
+                translationY = dragY
+                scaleX = dragScale
+                scaleY = dragScale
+            }
             .pointerInput(currentScale, dismissThresholdPx) {
                 detectDragGestures(
                     onDragStart = {
@@ -428,6 +480,7 @@ private fun BoxScope.SharedBoundsOverlay(model: String?, rect: BoundsPx, content
         val req = remember(model, rect) {
             coil.request.ImageRequest.Builder(context)
                 .data(model)
+
                 .size(coil.size.Size(rect.w, rect.h))
                 .precision(coil.size.Precision.INEXACT)
                 .scale(coil.size.Scale.FILL)
@@ -443,3 +496,6 @@ private fun BoxScope.SharedBoundsOverlay(model: String?, rect: BoundsPx, content
         )
     }
 }
+
+
+private fun powf(x: Float, p: Float): Float = Math.pow(x.toDouble(), p.toDouble()).toFloat()
