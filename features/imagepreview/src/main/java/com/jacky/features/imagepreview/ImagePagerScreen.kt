@@ -104,6 +104,9 @@ fun ImagePagerScreen(
     var exitOverlayVisible by remember { mutableStateOf(false) }
     val exitProgress = remember { androidx.compose.animation.core.Animatable(0f) }
 
+    // 若因“下拉触发返回”，则从当前拖拽时的缩放/位移计算退出动画的起始矩形
+    var exitStartRectFromDrag by remember { mutableStateOf<BoundsPx?>(null) }
+
     // 统一的“触发退出共享边界动画”逻辑（供系统返回键与顶部返回键复用）
     val triggerExit: (() -> Unit)? = onBack?.let {
         {
@@ -234,12 +237,30 @@ fun ImagePagerScreen(
                     onDragEnd = {
                         val absY = kotlin.math.abs(dragY)
                         if (dragging && absY > dismissThresholdPx) {
-                            // 触发反向共享边界退出动画
+                            // 触发反向共享边界退出动画（从“当前拖拽时的可见矩形”作为起点）
+                            // 1) 计算当前拖拽对应的缩放系数（与实时渲染一致）
+                            val fraction = (absY / dismissThresholdPx).coerceIn(0f, 1f)
+                            val eased = powf(fraction, dragEasingPower)
+                            val s = 1f - maxDragScaleReduction * eased
+                            // 2) 基于“Fit 到容器”的矩形，按中心缩放到当前拖拽大小，再叠加纵向位移 dragY
+                            val baseRect = if (containerSize.width > 0 && containerSize.height > 0) {
+                                if (currentImageSize.width > 0 && currentImageSize.height > 0) {
+                                    fitRectPx(containerSize, currentImageSize)
+                                } else {
+                                    BoundsPx(0, 0, containerSize.width, containerSize.height)
+                                }
+                            } else null
+                            if (baseRect != null) {
+                                val newW = (baseRect.w * s).toInt().coerceAtLeast(1)
+                                val newH = (baseRect.h * s).toInt().coerceAtLeast(1)
+                                val dx = ((baseRect.w - newW) / 2f).toInt()
+                                val dy = ((baseRect.h - newH) / 2f).toInt() + dragY.toInt()
+                                exitStartRectFromDrag = BoundsPx(baseRect.l + dx, baseRect.t + dy, newW, newH)
+                            }
                             scope.launch {
                                 if (onBack != null) {
                                     if (entryStartRectPx != null) {
                                         exitOverlayVisible = true
-                                        immersive.value = true
                                         exitProgress.snapTo(0f)
                                         exitProgress.animateTo(1f, tween(260))
                                         onBack()
@@ -365,14 +386,16 @@ fun ImagePagerScreen(
         }
 
         // 退出反向覆盖层
-        val exitStartRectPx = remember(containerSize, currentImageSize) {
-            if (containerSize.width > 0 && containerSize.height > 0) {
-                if (currentImageSize.width > 0 && currentImageSize.height > 0) {
-                    fitRectPx(containerSize, currentImageSize)
-                } else {
-                    BoundsPx(0, 0, containerSize.width, containerSize.height)
-                }
-            } else null
+        val exitStartRectPx = remember(containerSize, currentImageSize, exitStartRectFromDrag) {
+            exitStartRectFromDrag ?: run {
+                if (containerSize.width > 0 && containerSize.height > 0) {
+                    if (currentImageSize.width > 0 && currentImageSize.height > 0) {
+                        fitRectPx(containerSize, currentImageSize)
+                    } else {
+                        BoundsPx(0, 0, containerSize.width, containerSize.height)
+                    }
+                } else null
+            }
         }
         if (exitOverlayVisible && entryStartRectLocal != null && exitStartRectPx != null) {
             val rect = lerpRect(exitStartRectPx, entryStartRectLocal, exitProgress.value)
