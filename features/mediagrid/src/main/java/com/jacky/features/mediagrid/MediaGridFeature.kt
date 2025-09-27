@@ -136,10 +136,41 @@ class MediaGridFeature : Feature {
         ) { backStackEntry ->
             val mimetype = backStackEntry.arguments?.getString("mimetype") ?: "all"
             val pageSize = backStackEntry.arguments?.getInt("pageSize") ?: 60
+            // Obtain context once in composable scope; capture into lambda
+            val ctx = LocalContext.current
             MediaGridScreen(
                 mimeArg = mimetype,
                 pageSize = pageSize,
                 onItemClick = { uris, focusUri, startBounds ->
+                    // Prefetch likely-needed bitmaps to improve first-entry visuals
+                    // 1) Prefetch overlay (start bounds) size to match entry overlay request
+                    startBounds?.let { s ->
+                        val size = try {
+                            val p = s.split(',')
+                            Pair(p[2].toInt(), p[3].toInt())
+                        } catch (_: Throwable) { null }
+                        size?.let { (w, h) ->
+                            val req = coil.request.ImageRequest.Builder(ctx)
+                                .data(focusUri)
+                                .size(coil.size.Size(w, h))
+                                .precision(coil.size.Precision.INEXACT)
+                                .scale(coil.size.Scale.FILL)
+                                .build()
+                            coil.Coil.imageLoader(ctx).enqueue(req)
+                        }
+                    }
+                    // 2) Prefetch preview container-ish size (screen size) for low-res Fit layer
+                    run {
+                        val dm = ctx.resources.displayMetrics
+                        val req = coil.request.ImageRequest.Builder(ctx)
+                            .data(focusUri)
+                            .size(coil.size.Size(dm.widthPixels, dm.heightPixels))
+                            .precision(coil.size.Precision.INEXACT)
+                            .scale(coil.size.Scale.FIT)
+                            .build()
+                        coil.Coil.imageLoader(ctx).enqueue(req)
+                    }
+
                     // 仅将当前已加载页的 URI 列表传给预览，避免超长参数
                     val joined = uris.joinToString(",")
                     val encoded = java.net.URLEncoder.encode(joined, Charsets.UTF_8.name())
@@ -381,6 +412,29 @@ private fun MediaGridScreen(
                                         }
                                     }
                                 }
+
+                                    // Prefetch preview-sized bitmaps for currently visible items to warm Coil cache
+                                    val prefetchedSet = remember { hashSetOf<String>() }
+                                    LaunchedEffect(gridState, lpi) {
+                                        snapshotFlow {
+                                            gridState.layoutInfo.visibleItemsInfo.map { it.index }
+                                        }.collectLatest { indices ->
+                                            val dm = context.resources.displayMetrics
+                                            indices.forEach { i ->
+                                                val uri = lpi.peek(i)?.uri?.toString()
+                                                if (uri != null && prefetchedSet.add(uri)) {
+                                                    val req = ImageRequest.Builder(context)
+                                                        .data(uri)
+                                                        .size(coil.size.Size(dm.widthPixels, dm.heightPixels))
+                                                        .precision(coil.size.Precision.INEXACT)
+                                                        .scale(coil.size.Scale.FIT)
+                                                        .build()
+                                                    coil.Coil.imageLoader(context).enqueue(req)
+                                                }
+                                            }
+                                        }
+                                    }
+
 
                                 // 覆盖层：根据 loadState 展示加载/错误/空态
                                 when (val refresh = lpi.loadState.refresh) {

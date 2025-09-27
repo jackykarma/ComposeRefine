@@ -39,7 +39,14 @@ import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onGloballyPositioned
+
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.first
+
 import androidx.compose.material.icons.Icons
+
 
 @Composable
 fun ImagePagerScreen(
@@ -59,7 +66,7 @@ fun ImagePagerScreen(
 
     // Entry shared-bounds transition
     val startBoundsStr = remember(entryStartBounds) { entryStartBounds?.takeIf { it.isNotBlank() } }
-    val entryStartRectPx = remember(startBoundsStr) { parseBounds(startBoundsStr) }
+    val entryStartRectPx: BoundsPx? = remember(startBoundsStr) { parseBounds(startBoundsStr) }
     var entryOverlayVisible by remember { mutableStateOf(entryStartRectPx != null) }
     val scope = rememberCoroutineScope()
 
@@ -127,9 +134,15 @@ fun ImagePagerScreen(
     // 当图片未放大（scale<=1f）时允许 Pager 滑动以实现“边滑边预览”；放大时禁用 Pager 滑动
     var allowPagerScroll by remember { mutableStateOf(true) }
 
+    var rootWindowOffset by remember { mutableStateOf(IntOffset(0, 0)) }
+
     Box(Modifier
         .fillMaxSize()
         .onSizeChanged { containerSize = it }
+        .onGloballyPositioned { coords ->
+            val p = coords.localToWindow(androidx.compose.ui.geometry.Offset.Zero)
+            rootWindowOffset = IntOffset(p.x.toInt(), p.y.toInt())
+        }
         .background(MaterialTheme.colorScheme.background)) {
         // Pager
         // Debug: pager allow and scrolling progress
@@ -145,6 +158,7 @@ fun ImagePagerScreen(
 
         HorizontalPager(state = pagerState, userScrollEnabled = allowPagerScroll, modifier = Modifier
             .fillMaxSize()
+            .alpha(if (entryOverlayVisible || exitOverlayVisible) 0f else 1f)
             .graphicsLayer { translationY = dragY }
             .pointerInput(currentScale, dismissThresholdPx) {
                 detectDragGestures(
@@ -235,35 +249,71 @@ fun ImagePagerScreen(
             }
         }
 
-        // Entry shared bounds overlay and animation
+        // Convert start bounds from window to local coordinates of this Box
+        val entryStartRectLocal = remember(entryStartRectPx, rootWindowOffset) {
+            entryStartRectPx?.offset(-rootWindowOffset.x, -rootWindowOffset.y)
+        }
+
+        // Compute end rect: prefer fit-to-container if image size known; otherwise fallback to full container
+        val entryEndIsFallback = remember(containerSize, currentImageSize) {
+            containerSize.width > 0 && containerSize.height > 0 && (currentImageSize.width == 0 || currentImageSize.height == 0)
+        }
         val entryEndRectPx = remember(containerSize, currentImageSize) {
-            if (containerSize.width > 0 && containerSize.height > 0 && currentImageSize.width > 0 && currentImageSize.height > 0) {
-                fitRectPx(containerSize, currentImageSize)
+            if (containerSize.width > 0 && containerSize.height > 0) {
+                if (!entryEndIsFallback) {
+                    fitRectPx(containerSize, currentImageSize)
+                } else {
+                    BoundsPx(0, 0, containerSize.width, containerSize.height)
+                }
             } else null
         }
-        LaunchedEffect(entryOverlayVisible, entryEndRectPx) {
-            if (entryOverlayVisible && entryStartRectPx != null && entryEndRectPx != null) {
-                immersive.value = true
-                entryProgress.snapTo(0f)
-                entryProgress.animateTo(1f, tween(280))
-                entryOverlayVisible = false
-                immersive.value = false
+
+        // Entry shared bounds overlay and animation
+        var entryRan by remember { mutableStateOf(false) }
+        LaunchedEffect(entryOverlayVisible, startBoundsStr, containerSize, currentImageSize) {
+            if (entryOverlayVisible && !entryRan) {
+                // Ensure start rect and container ready
+                if (entryStartRectLocal == null || containerSize.width == 0 || containerSize.height == 0) return@LaunchedEffect
+
+                // If measured size is not yet available, wait a short timeout
+                if (currentImageSize.width == 0 || currentImageSize.height == 0) {
+                    withTimeoutOrNull(250) {
+                        snapshotFlow { currentImageSize }
+                            .first { it.width > 0 && it.height > 0 }
+                    }
+                }
+
+                val endOk = entryEndRectPx != null
+                if (endOk) {
+                    immersive.value = true
+                    entryProgress.snapTo(0f)
+                    entryRan = true
+                    entryProgress.animateTo(1f, tween(280))
+                    entryOverlayVisible = false
+                    immersive.value = false
+                }
             }
         }
-        if (entryOverlayVisible && entryStartRectPx != null) {
-            val rect = if (entryEndRectPx != null) lerpRect(entryStartRectPx, entryEndRectPx, entryProgress.value) else entryStartRectPx
-            SharedBoundsOverlay(model = urls.getOrNull(startIndex), rect = rect)
+
+        if (entryOverlayVisible && entryStartRectLocal != null) {
+            val rect = if (entryEndRectPx != null) lerpRect(entryStartRectLocal, entryEndRectPx, entryProgress.value) else entryStartRectLocal
+            // Use Crop during entry to ensure the overlay always fills the rect (matches grid item visual)
+            SharedBoundsOverlay(model = urls.getOrNull(startIndex), rect = rect, contentScale = ContentScale.Crop)
         }
 
         // Exit reverse overlay
         val exitStartRectPx = remember(containerSize, currentImageSize) {
-            if (containerSize.width > 0 && containerSize.height > 0 && currentImageSize.width > 0 && currentImageSize.height > 0) {
-                fitRectPx(containerSize, currentImageSize)
+            if (containerSize.width > 0 && containerSize.height > 0) {
+                if (currentImageSize.width > 0 && currentImageSize.height > 0) {
+                    fitRectPx(containerSize, currentImageSize)
+                } else {
+                    BoundsPx(0, 0, containerSize.width, containerSize.height)
+                }
             } else null
         }
-        if (exitOverlayVisible && entryStartRectPx != null && exitStartRectPx != null) {
-            val rect = lerpRect(exitStartRectPx, entryStartRectPx, exitProgress.value)
-            SharedBoundsOverlay(model = urls.getOrNull(pagerState.currentPage), rect = rect)
+        if (exitOverlayVisible && entryStartRectLocal != null && exitStartRectPx != null) {
+            val rect = lerpRect(exitStartRectPx, entryStartRectLocal, exitProgress.value)
+            SharedBoundsOverlay(model = urls.getOrNull(pagerState.currentPage), rect = rect, contentScale = ContentScale.Fit)
         }
 
         // Bottom thumbnails with full-width background
@@ -344,6 +394,8 @@ private fun fitRectPx(container: IntSize, image: IntSize): BoundsPx {
     return BoundsPx(l, t, w, h)
 }
 
+private fun BoundsPx.offset(dx: Int, dy: Int) = BoundsPx(l + dx, t + dy, w, h)
+
 private fun lerpRect(a: BoundsPx, b: BoundsPx, p: Float): BoundsPx {
     val t = p.coerceIn(0f, 1f)
     fun lerpInt(x: Int, y: Int): Int = (x + (y - x) * t).toInt()
@@ -356,7 +408,7 @@ private fun lerpRect(a: BoundsPx, b: BoundsPx, p: Float): BoundsPx {
 }
 
 @Composable
-private fun BoxScope.SharedBoundsOverlay(model: String?, rect: BoundsPx) {
+private fun BoxScope.SharedBoundsOverlay(model: String?, rect: BoundsPx, contentScale: ContentScale = ContentScale.Fit) {
     val density = LocalDensity.current
     val wDp = with(density) { rect.w.toDp() }
     val hDp = with(density) { rect.h.toDp() }
@@ -365,10 +417,19 @@ private fun BoxScope.SharedBoundsOverlay(model: String?, rect: BoundsPx) {
             .fillMaxSize()
             .zIndex(10f)
     ) {
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val req = remember(model, rect) {
+            coil.request.ImageRequest.Builder(context)
+                .data(model)
+                .size(coil.size.Size(rect.w, rect.h))
+                .precision(coil.size.Precision.INEXACT)
+                .scale(coil.size.Scale.FILL)
+                .build()
+        }
         coil.compose.AsyncImage(
-            model = model,
+            model = req,
             contentDescription = null,
-            contentScale = ContentScale.Crop,
+            contentScale = contentScale,
             modifier = Modifier
                 .offset { IntOffset(rect.l, rect.t) }
                 .size(wDp, hDp)
