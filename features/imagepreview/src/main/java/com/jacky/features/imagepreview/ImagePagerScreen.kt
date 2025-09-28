@@ -78,6 +78,7 @@ fun ImagePagerScreen(
     startIndex: Int = 0,
     maxScale: Float = 3f,
     onBack: (() -> Unit)? = null,
+    onPullUp: (() -> Unit)? = null, // 上拉回调：预留用于展示大图详情
     entryStartBounds: String? = null,
     // 下拉/返回相关的可调参数
     dragAlphaFactor: Float = 0.6f,            // 0..1，数值越大透明度下降更快
@@ -241,19 +242,22 @@ fun ImagePagerScreen(
             .pointerInput(currentScale <= 1f, dismissThresholdPx) {
                 if (currentScale <= 1f) {
 
+                var pullUpY = 0f // 仅用于检测“上拉”幅度的累加（不参与渲染）
+
                 detectDragGestures(
                     onDragStart = {
                         if (currentScale <= 1f) {
+                            pullUpY = 0f
                             dragging = true
                             immersive.value = true
                         }
                     },
                     onDragEnd = {
-                        val absY = kotlin.math.abs(dragY)
-                        if (dragging && absY > dismissThresholdPx) {
+                        // 下拉触发返回；上拉达到阈值则触发 onPullUp 回调（不返回）
+                        if (dragging && dragY > dismissThresholdPx) {
                             // 触发反向共享边界退出动画（从“当前拖拽时的可见矩形”作为起点）
                             // 1) 计算当前拖拽对应的缩放系数（与实时渲染一致）
-                            val fraction = (absY / dismissThresholdPx).coerceIn(0f, 1f)
+                            val fraction = (dragY / dismissThresholdPx).coerceIn(0f, 1f)
                             val eased = powf(fraction, dragEasingPower)
                             val s = 1f - maxDragScaleReduction * eased
                             // 2) 基于“Fit 到容器”的矩形，按中心缩放到当前拖拽大小，再叠加纵向位移 dragY
@@ -283,6 +287,13 @@ fun ImagePagerScreen(
                                     }
                                 }
                             }
+                        } else if (onPullUp != null && pullUpY < -dismissThresholdPx) {
+                            Log.d(TAG, "ImagePagerScreen: onPullUp triggered pullUpY=$pullUpY thresholdPx=$dismissThresholdPx")
+                            onPullUp()
+                            // 结束后复位
+                            scope.launch { Animatable(dragY).animateTo(0f) { dragY = value } }
+                            immersive.value = false
+
                         } else {
                             // 回弹复位
                             scope.launch { Animatable(dragY).animateTo(0f) { dragY = value } }
@@ -292,9 +303,14 @@ fun ImagePagerScreen(
                     },
                 ) { change, dragAmount ->
                     if (!dragging && currentScale > 1f) return@detectDragGestures
-                    if (kotlin.math.abs(dragAmount.y) >= kotlin.math.abs(dragAmount.x)) {
+                    val verticalDominant = kotlin.math.abs(dragAmount.y) >= kotlin.math.abs(dragAmount.x)
+                    if (verticalDominant && dragAmount.y > 0f) {
+                        // 下拉：累加并消费
                         dragY += dragAmount.y
                         change.consume()
+                    } else if (verticalDominant && dragAmount.y < 0f) {
+                        // 上拉：只统计，不消费（预留后用）
+                        pullUpY += dragAmount.y
                     }
                     }
 
