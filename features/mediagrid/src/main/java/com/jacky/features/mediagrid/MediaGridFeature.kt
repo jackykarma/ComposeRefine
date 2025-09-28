@@ -114,6 +114,8 @@ import coil.request.ImageRequest
 import com.jacky.compose.feature.api.Feature
 import com.jacky.features.medialibrary.MimeFilter
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
 import com.jacky.features.imagepreview.ImagePagerScreen
 import androidx.compose.runtime.mutableStateMapOf
 
@@ -142,6 +144,11 @@ class MediaGridFeature : Feature {
             val pageSize = backStackEntry.arguments?.getInt("pageSize") ?: 60
             // Obtain context once in composable scope; capture into lambda
             val ctx = LocalContext.current
+            var previewWindowStartAbs by remember { mutableIntStateOf(0) }
+            val parentGridState = rememberLazyGridState()
+            val parentScope = rememberCoroutineScope()
+
+
 
             // Overlay preview state kept in the same route to ensure grid stays rendered behind
             var previewVisible by remember { mutableStateOf(false) }
@@ -157,7 +164,7 @@ class MediaGridFeature : Feature {
                 MediaGridScreen(
                     mimeArg = mimetype,
                     pageSize = pageSize,
-                    onItemClick = { uris, focusUri, startBounds ->
+                    onItemClick = { uris, focusUri, startBounds, windowStartAbs ->
                         // Prefetch likely-needed bitmaps to improve first-entry visuals
                         // 1) Prefetch overlay (start bounds) size to match entry overlay request
                         startBounds?.let { s ->
@@ -184,6 +191,9 @@ class MediaGridFeature : Feature {
                                 .precision(coil.size.Precision.INEXACT)
                                 .scale(coil.size.Scale.FIT)
                                 .build()
+                            // 记录预览窗口在数据集中的起始绝对索引，便于预览页切换时把网格滚动到目标项
+                            previewWindowStartAbs = windowStartAbs
+
                             coil.Coil.imageLoader(ctx).enqueue(req)
                         }
 
@@ -197,8 +207,8 @@ class MediaGridFeature : Feature {
                         onItemBounds = { uri, bounds ->
                             thumbBoundsByUri[uri] = bounds
                             if (previewCurrentUrl == uri) previewExitTargetBounds = bounds
-                        }
-
+                        },
+                        gridState = parentGridState
                 )
 
                 if (previewVisible) {
@@ -213,6 +223,15 @@ class MediaGridFeature : Feature {
                         exitTargetBounds = previewExitTargetBounds,
                         onPageChanged = { _, url ->
                             previewCurrentUrl = url
+                                // 当预览页稳定到某一页时，把网格滚动到该项以确保有可用的 exit bounds
+                                val pageIndex = previewUrls.indexOf(url).coerceAtLeast(0)
+                                val targetAbs = (previewWindowStartAbs + pageIndex).coerceAtLeast(0)
+                                // 如不在可见范围内，才滚动至目标项，避免初次点击进入时发生无意义的滚动抖动
+                                val visible = parentGridState.layoutInfo.visibleItemsInfo.any { it.index == targetAbs }
+                                if (!visible) {
+                                    parentScope.launch { parentGridState.animateScrollToItem(targetAbs) }
+                                }
+
                             previewExitTargetBounds = if (url.isNotEmpty()) thumbBoundsByUri[url] else null
                         }
                     )
@@ -235,8 +254,9 @@ private enum class FilterOption { All, Images, Videos, Live, Favorites }
 private fun MediaGridScreen(
     mimeArg: String,
     pageSize: Int,
-    onItemClick: (uris: List<String>, focusUrl: String, startBounds: String?) -> Unit,
+    onItemClick: (uris: List<String>, focusUrl: String, startBounds: String?, windowStartAbs: Int) -> Unit,
     onItemBounds: ((uri: String, bounds: String) -> Unit)? = null,
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
     span: Int = 4,
     spacing: Dp = 2.dp,
 ) {
@@ -316,7 +336,7 @@ private fun MediaGridScreen(
     // Drag target (absolute index); we'll continuously scroll to it (throttled)
     var dragTargetIndex by remember { mutableIntStateOf(-1) }
 
-    val gridState = rememberLazyGridState()
+    // gridState 由父层传入
 
     val pagingFlow = remember(mimeFilter, pageSize, favoritesOnly, liveOnly, hasPermissions) {
         if (hasPermissions) viewModel
@@ -432,7 +452,7 @@ private fun MediaGridScreen(
                                                         val adjustedIndex = targetOffsetInWindow.coerceIn(0, uris.size - 1)
 
                                                         android.util.Log.d("MediaGrid", "Clicked index: $index, window: $start-$end, offset: $targetOffsetInWindow, final: $adjustedIndex, uris: ${uris.size}")
-                                                        onItemClick(uris, centerUri, thumbBoundsStr)
+                                                        onItemClick(uris, centerUri, thumbBoundsStr, start)
                                                     },
                                                     modifier = Modifier
                                                         .fillMaxSize()
