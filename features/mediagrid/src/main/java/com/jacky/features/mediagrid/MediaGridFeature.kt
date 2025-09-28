@@ -115,6 +115,8 @@ import com.jacky.compose.feature.api.Feature
 import com.jacky.features.medialibrary.MimeFilter
 import kotlinx.coroutines.delay
 import com.jacky.features.imagepreview.ImagePagerScreen
+import androidx.compose.runtime.mutableStateMapOf
+
 
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -146,6 +148,10 @@ class MediaGridFeature : Feature {
             var previewUrls by remember { mutableStateOf<List<String>>(emptyList()) }
             var previewFocusUri by remember { mutableStateOf("") }
             var previewStartBounds by remember { mutableStateOf<String?>(null) }
+            // 预览退出目标：由网格中“当前目标项”的窗口 bounds 提供
+            val thumbBoundsByUri = remember { mutableStateMapOf<String, String>() }
+            var previewCurrentUrl by remember { mutableStateOf<String?>(null) }
+            var previewExitTargetBounds by remember { mutableStateOf<String?>(null) }
 
             Box(Modifier.fillMaxSize()) {
                 MediaGridScreen(
@@ -187,6 +193,12 @@ class MediaGridFeature : Feature {
                         previewStartBounds = startBounds
                         previewVisible = true
                     }
+                        ,
+                        onItemBounds = { uri, bounds ->
+                            thumbBoundsByUri[uri] = bounds
+                            if (previewCurrentUrl == uri) previewExitTargetBounds = bounds
+                        }
+
                 )
 
                 if (previewVisible) {
@@ -197,7 +209,12 @@ class MediaGridFeature : Feature {
                         urls = previewUrls,
                         startIndex = startIndex,
                         onBack = { previewVisible = false },
-                        entryStartBounds = previewStartBounds
+                        entryStartBounds = previewStartBounds,
+                        exitTargetBounds = previewExitTargetBounds,
+                        onPageChanged = { _, url ->
+                            previewCurrentUrl = url
+                            previewExitTargetBounds = if (url.isNotEmpty()) thumbBoundsByUri[url] else null
+                        }
                     )
                 }
             }
@@ -219,6 +236,7 @@ private fun MediaGridScreen(
     mimeArg: String,
     pageSize: Int,
     onItemClick: (uris: List<String>, focusUrl: String, startBounds: String?) -> Unit,
+    onItemBounds: ((uri: String, bounds: String) -> Unit)? = null,
     span: Int = 4,
     spacing: Dp = 2.dp,
 ) {
@@ -421,7 +439,9 @@ private fun MediaGridScreen(
                                                         .onGloballyPositioned { coords ->
                                                             val pos = coords.localToWindow(Offset.Zero)
                                                             val size = coords.size
-                                                            thumbBoundsStr = "${pos.x.toInt()},${pos.y.toInt()},${size.width},${size.height}"
+                                                            val s = "${pos.x.toInt()},${pos.y.toInt()},${size.width},${size.height}"
+                                                            thumbBoundsStr = s
+                                                            onItemBounds?.invoke(centerUri, s)
                                                         }
                                                 )
                                             } else {

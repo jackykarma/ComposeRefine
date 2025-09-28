@@ -80,6 +80,8 @@ fun ImagePagerScreen(
     onBack: (() -> Unit)? = null,
     onPullUp: (() -> Unit)? = null, // 上拉回调：预留用于展示大图详情
     entryStartBounds: String? = null,
+    exitTargetBounds: String? = null, // 退出目标：当前列表项的窗口 bounds（实时）
+    onPageChanged: ((Int, String) -> Unit)? = null, // 通知父层当前页变化以便同步网格
     // 下拉/返回相关的可调参数
     dragAlphaFactor: Float = 0.6f,            // 0..1，数值越大透明度下降更快
     maxDragScaleReduction: Float = 0.30f,     // 0..1, 0.30 = 最多缩小到 70%
@@ -384,6 +386,11 @@ fun ImagePagerScreen(
         val entryStartRectLocal = remember(entryStartRectPx, rootWindowOffset) {
             entryStartRectPx?.offset(-rootWindowOffset.x, -rootWindowOffset.y)
         }
+        //                    
+        val exitTargetRectLocal = remember(exitTargetBounds, rootWindowOffset, entryStartRectLocal) {
+            val parsed = parseBounds(exitTargetBounds)?.offset(-rootWindowOffset.x, -rootWindowOffset.y)
+            parsed ?: entryStartRectLocal
+        }
 
         // 计算终点矩形：优先按图片尺寸适配容器，否则回退为铺满容器
         val entryEndIsFallback = remember(containerSize, currentImageSize) {
@@ -443,8 +450,8 @@ fun ImagePagerScreen(
                 } else null
             }
         }
-        if (exitOverlayVisible && entryStartRectLocal != null && exitStartRectPx != null) {
-            val rect = lerpRect(exitStartRectPx, entryStartRectLocal, exitProgress.value)
+        if (exitOverlayVisible && exitTargetRectLocal != null && exitStartRectPx != null) {
+            val rect = lerpRect(exitStartRectPx, exitTargetRectLocal, exitProgress.value)
             SharedBoundsOverlay(model = urls.getOrNull(pagerState.currentPage), rect = rect, contentScale = ContentScale.Crop)
         }
 
@@ -482,6 +489,18 @@ fun ImagePagerScreen(
 
 
         // 同步：当 Pager 停止滚动时，令缩略图居中到当前页
+        // 通知父层当前页（稳定后）以便同步网格/更新目标 bounds
+        var lastNotifiedPage by remember { mutableIntStateOf(-1) }
+        LaunchedEffect(pagerState, urls) {
+            snapshotFlow { pagerState.currentPage to pagerState.isScrollInProgress }
+                .collectLatest { (page, inProgress) ->
+                    if (!inProgress && page != lastNotifiedPage) {
+                        lastNotifiedPage = page
+                        onPageChanged?.invoke(page, urls.getOrNull(page) ?: "")
+                    }
+                }
+        }
+
         LaunchedEffect(pagerState) {
             snapshotFlow { pagerState.currentPage to pagerState.isScrollInProgress }
                 .collectLatest { (page, inProgress) ->
