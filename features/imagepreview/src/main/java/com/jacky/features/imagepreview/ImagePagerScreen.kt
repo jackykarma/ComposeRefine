@@ -165,6 +165,14 @@ fun ImagePagerScreen(
             Log.d(TAG, "ImagePagerScreen: initialized at page ${pagerState.currentPage}")
         }
     }
+    // 当页码变化时，重置用于手势门控的 currentScale，确保新页默认允许下拉返回
+    LaunchedEffect(pagerState.currentPage) {
+        if (currentScale != 1f) {
+            Log.d(TAG, "ImagePagerScreen: reset currentScale to 1f on page change -> page=${pagerState.currentPage}")
+            currentScale = 1f
+        }
+    }
+
 
     // 当图片未放大（scale<=1f）时允许 Pager 滑动以实现“边滑边预览”；放大时禁用 Pager 滑动
     var allowPagerScroll by remember { mutableStateOf(true) }
@@ -213,6 +221,10 @@ fun ImagePagerScreen(
                 }
         }
 
+        LaunchedEffect(currentScale) {
+            Log.d(TAG, "ImagePagerScreen: downSwipeEnabled=${currentScale <= 1f} currentScale=$currentScale")
+        }
+
         HorizontalPager(state = pagerState, userScrollEnabled = allowPagerScroll, modifier = Modifier
             .fillMaxSize()
             .alpha(if (entryOverlayVisible || exitOverlayVisible) 0f else 1f)
@@ -226,7 +238,9 @@ fun ImagePagerScreen(
                 scaleX = dragScale
                 scaleY = dragScale
             }
-            .pointerInput(currentScale, dismissThresholdPx) {
+            .pointerInput(currentScale <= 1f, dismissThresholdPx) {
+                if (currentScale <= 1f) {
+
                 detectDragGestures(
                     onDragStart = {
                         if (currentScale <= 1f) {
@@ -282,6 +296,8 @@ fun ImagePagerScreen(
                         dragY += dragAmount.y
                         change.consume()
                     }
+                    }
+
                 }
             }
         ) { page ->
@@ -297,13 +313,27 @@ fun ImagePagerScreen(
                     onPinchStart = { immersive.value = true },
                     requestPageChange = { delta ->
                         val target = (pagerState.currentPage + delta).coerceIn(0, pagerState.pageCount - 1)
+                        Log.d(TAG, "ImagePagerScreen: requestPageChange delta=$delta target=$target from=${pagerState.currentPage}")
                         if (target != pagerState.currentPage) {
                             scope.launch { pagerState.animateScrollToPage(target) }
                         }
                     },
-                    onAllowPagerScrollChange = { allow -> allowPagerScroll = allow },
-                    onLowResLoaded = { size -> if (page == pagerState.currentPage) currentImageSize = size },
-                    onScaleChanged = { s -> if (page == pagerState.currentPage) currentScale = s }
+                    onAllowPagerScrollChange = { allow ->
+                        Log.d(TAG, "ImagePagerScreen: onAllowPagerScrollChange allow=$allow scale=$currentScale page=$page")
+                        allowPagerScroll = allow
+                    },
+                    onLowResLoaded = { size ->
+                        if (page == pagerState.currentPage) {
+                            Log.d(TAG, "ImagePagerScreen: onLowResLoaded size=$size page=$page")
+                            currentImageSize = size
+                        }
+                    },
+                    onScaleChanged = { s ->
+                        if (page == pagerState.currentPage) {
+                            if (currentScale != s) Log.d(TAG, "ImagePagerScreen: currentScale -> $s (page=$page)")
+                            currentScale = s
+                        }
+                    }
                 )
             }
         }
