@@ -146,6 +146,9 @@ class MediaGridFeature : Feature {
             val pageSize = backStackEntry.arguments?.getInt("pageSize") ?: 60
             // Obtain context once in composable scope; capture into lambda
             val ctx = LocalContext.current
+            var gridInitialIndex by remember { mutableIntStateOf(0) }
+            var gridInitialOffset by remember { mutableIntStateOf(0) }
+
             var previewWindowStartAbs by remember { mutableIntStateOf(0) }
             val parentGridState = rememberLazyGridState()
             val parentScope = rememberCoroutineScope()
@@ -199,6 +202,10 @@ class MediaGridFeature : Feature {
                             coil.Coil.imageLoader(ctx).enqueue(req)
                         }
 
+                        // 记录打开预览时的网格初始滚动位置，便于必要时恢复
+                        gridInitialIndex = parentGridState.firstVisibleItemIndex
+                        gridInitialOffset = parentGridState.firstVisibleItemScrollOffset
+
                         // Open in overlay
                         previewUrls = uris
                         previewFocusUri = focusUri
@@ -226,18 +233,34 @@ class MediaGridFeature : Feature {
                         exitTargetBounds = previewExitTargetBounds,
                         onPageChanged = { _, url ->
                             previewCurrentUrl = url
-                                // 当预览页稳定到某一页时，把网格滚动到该项以确保有可用的 exit bounds
+                            val isEntry = (url == previewFocusUri)
+                            if (isEntry) {
+                                // 返回到入场项：立即无动画恢复主列表到进入时的位置，避免下拉时出现“先滚后再滚回”的跳变
+                                val curIndex = parentGridState.firstVisibleItemIndex
+                                val curOffset = parentGridState.firstVisibleItemScrollOffset
+                                if (curIndex != gridInitialIndex || curOffset != gridInitialOffset) {
+                                    parentScope.launch { parentGridState.scrollToItem(gridInitialIndex, gridInitialOffset) }
+                                }
+                                // 优先用实时可见 bounds，否则回退到入场起点 bounds（即使 A 暂不可见也不强制滚动）
+                                previewExitTargetBounds = thumbBoundsByUri[url] ?: previewStartBounds
+                            } else {
+                                // 返回到非入场项：如不在可见范围才滚动，确保有可用的 exit bounds
                                 val pageIndex = previewUrls.indexOf(url).coerceAtLeast(0)
                                 val targetAbs = (previewWindowStartAbs + pageIndex).coerceAtLeast(0)
-                                // 如不在可见范围内，才滚动至目标项，避免初次点击进入时发生无意义的滚动抖动
                                 val visible = parentGridState.layoutInfo.visibleItemsInfo.any { it.index == targetAbs }
                                 if (!visible) {
                                     parentScope.launch { parentGridState.animateScrollToItem(targetAbs) }
                                 }
-
-                            previewExitTargetBounds = if (url.isNotEmpty()) thumbBoundsByUri[url] else null
+                                previewExitTargetBounds = if (url.isNotEmpty()) thumbBoundsByUri[url] else null
+                            }
                         },
-                        onExitStart = { url -> blankUri = url },
+                        onExitStart = { url ->
+                            blankUri = url
+                            // 若是返回到入场项，则在退出动画开始时恢复网格到初始可见位置，避免最终位置偏移
+                            if (url == previewFocusUri) {
+                                parentScope.launch { parentGridState.scrollToItem(gridInitialIndex, gridInitialOffset) }
+                            }
+                        },
                         onExitBlankingChange = { url, active -> blankUri = if (active) url else null }
                     )
                 }
