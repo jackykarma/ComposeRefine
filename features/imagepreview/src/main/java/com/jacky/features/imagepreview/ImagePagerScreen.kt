@@ -82,6 +82,8 @@ fun ImagePagerScreen(
     entryStartBounds: String? = null,
     exitTargetBounds: String? = null, // 退出目标：当前列表项的窗口 bounds（实时）
     onPageChanged: ((Int, String) -> Unit)? = null, // 通知父层当前页变化以便同步网格
+    onExitStart: ((String) -> Unit)? = null, // 退出动画开始时回调当前 url，用于父层将目标格子置空白
+    onExitBlankingChange: ((String, Boolean) -> Unit)? = null, // 下拉手势期间：true 开始预留空位；false 取消
     // 下拉/返回相关的可调参数
     dragAlphaFactor: Float = 0.6f,            // 0..1，数值越大透明度下降更快
     maxDragScaleReduction: Float = 0.30f,     // 0..1, 0.30 = 最多缩小到 70%
@@ -115,6 +117,8 @@ fun ImagePagerScreen(
         {
             scope.launch {
                 if (entryStartRectPx != null) {
+                    // 通知父层：退出动画开始（用于将目标网格项置为空白）
+                    onExitStart?.invoke(urls.getOrNull(pagerState.currentPage) ?: "")
                     exitOverlayVisible = true
                     immersive.value = true
                     exitProgress.snapTo(0f)
@@ -252,6 +256,8 @@ fun ImagePagerScreen(
                             pullUpY = 0f
                             dragging = true
                             immersive.value = true
+                            // 下拉开始：立即让父层将目标格子置为空白
+                            onExitBlankingChange?.invoke(urls.getOrNull(pagerState.currentPage) ?: "", true)
                         }
                     },
                     onDragEnd = {
@@ -280,6 +286,8 @@ fun ImagePagerScreen(
                             scope.launch {
                                 if (onBack != null) {
                                     if (entryStartRectPx != null) {
+                                        // 											 								
+                                        onExitStart?.invoke(urls.getOrNull(pagerState.currentPage) ?: "")
                                         exitOverlayVisible = true
                                         exitProgress.snapTo(0f)
                                         exitProgress.animateTo(1f, tween(260))
@@ -294,11 +302,16 @@ fun ImagePagerScreen(
                             onPullUp()
                             // 结束后复位
                             scope.launch { Animatable(dragY).animateTo(0f) { dragY = value } }
+                            onExitBlankingChange?.invoke(urls.getOrNull(pagerState.currentPage) ?: "", false)
+                            immersive.value = false
+                            dragging = false
+
                             immersive.value = false
 
                         } else {
                             // 回弹复位
                             scope.launch { Animatable(dragY).animateTo(0f) { dragY = value } }
+                            onExitBlankingChange?.invoke(urls.getOrNull(pagerState.currentPage) ?: "", false)
                             immersive.value = false
                         }
                         dragging = false

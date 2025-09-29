@@ -140,6 +140,8 @@ class MediaGridFeature : Feature {
                 navArgument("pageSize") { type = NavType.IntType; defaultValue = 60 },
             )
         ) { backStackEntry ->
+            var blankUri by remember { mutableStateOf<String?>(null) }
+
             val mimetype = backStackEntry.arguments?.getString("mimetype") ?: "all"
             val pageSize = backStackEntry.arguments?.getInt("pageSize") ?: 60
             // Obtain context once in composable scope; capture into lambda
@@ -208,7 +210,8 @@ class MediaGridFeature : Feature {
                             thumbBoundsByUri[uri] = bounds
                             if (previewCurrentUrl == uri) previewExitTargetBounds = bounds
                         },
-                        gridState = parentGridState
+                        gridState = parentGridState,
+                        blankUri = blankUri
                 )
 
                 if (previewVisible) {
@@ -218,7 +221,7 @@ class MediaGridFeature : Feature {
                     ImagePagerScreen(
                         urls = previewUrls,
                         startIndex = startIndex,
-                        onBack = { previewVisible = false },
+                        onBack = { blankUri = null; previewVisible = false },
                         entryStartBounds = previewStartBounds,
                         exitTargetBounds = previewExitTargetBounds,
                         onPageChanged = { _, url ->
@@ -233,7 +236,9 @@ class MediaGridFeature : Feature {
                                 }
 
                             previewExitTargetBounds = if (url.isNotEmpty()) thumbBoundsByUri[url] else null
-                        }
+                        },
+                        onExitStart = { url -> blankUri = url },
+                        onExitBlankingChange = { url, active -> blankUri = if (active) url else null }
                     )
                 }
             }
@@ -257,6 +262,7 @@ private fun MediaGridScreen(
     onItemClick: (uris: List<String>, focusUrl: String, startBounds: String?, windowStartAbs: Int) -> Unit,
     onItemBounds: ((uri: String, bounds: String) -> Unit)? = null,
     gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    blankUri: String? = null,
     span: Int = 4,
     spacing: Dp = 2.dp,
 ) {
@@ -431,39 +437,51 @@ private fun MediaGridScreen(
                                         ) {
                                             if (asset != null) {
                                                 val centerUri = asset.uri.toString()
-                                                MediaThumb(
-                                                    uri = centerUri,
-                                                    isVideo = asset.isVideo,
-                                                    durationMs = asset.durationMs ?: 0L,
-                                                    onClick = {
-                                                        val window = 60
-                                                        val start = maxOf(0, index - window / 2)
-                                                        val end = minOf(lpi.itemCount - 1, index + window / 2)
+                                                if (blankUri != null && centerUri == blankUri) {
+                                                    // 退出动画期间：将目标格子置为空白，占位等待共享边界回收
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .background(Color.Black.copy(alpha = 0.03f))
+                                                    )
+                                                } else {
+                                                    MediaThumb(
+                                                        uri = centerUri,
+                                                        isVideo = asset.isVideo,
+                                                        durationMs = asset.durationMs ?: 0L,
+                                                        onClick = {
+                                                            val window = 60
+                                                            val start = maxOf(0, index - window / 2)
+                                                            val end = minOf(lpi.itemCount - 1, index + window / 2)
 
-                                                        // Calculate the target index as offset from window start
-                                                        val targetOffsetInWindow = index - start
+                                                            // Calculate the target index as offset from window start
+                                                            val targetOffsetInWindow = index - start
 
-                                                        // Build URI list (only include loaded items)
-                                                        val uris = (start..end).mapNotNull { i ->
-                                                            lpi.peek(i)?.uri?.toString()
-                                                        }
+                                                            // Build URI list (only include loaded items)
+                                                            val uris = (start..end).mapNotNull { i ->
+                                                                lpi.peek(i)?.uri?.toString()
+                                                            }
 
-                                                        // Use the offset directly, clamped to available range
-                                                        val adjustedIndex = targetOffsetInWindow.coerceIn(0, uris.size - 1)
+                                                            // Use the offset directly, clamped to available range
+                                                            val adjustedIndex = targetOffsetInWindow.coerceIn(0, uris.size - 1)
 
-                                                        android.util.Log.d("MediaGrid", "Clicked index: $index, window: $start-$end, offset: $targetOffsetInWindow, final: $adjustedIndex, uris: ${uris.size}")
-                                                        onItemClick(uris, centerUri, thumbBoundsStr, start)
-                                                    },
-                                                    modifier = Modifier
-                                                        .fillMaxSize()
-                                                        .onGloballyPositioned { coords ->
-                                                            val pos = coords.localToWindow(Offset.Zero)
-                                                            val size = coords.size
-                                                            val s = "${pos.x.toInt()},${pos.y.toInt()},${size.width},${size.height}"
-                                                            thumbBoundsStr = s
-                                                            onItemBounds?.invoke(centerUri, s)
-                                                        }
-                                                )
+                                                            android.util.Log.d(
+                                                                "MediaGrid",
+                                                                "Clicked index: $index, window: $start-$end, offset: $targetOffsetInWindow, final: $adjustedIndex, uris: ${uris.size}"
+                                                            )
+                                                            onItemClick(uris, centerUri, thumbBoundsStr, start)
+                                                        },
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .onGloballyPositioned { coords ->
+                                                                val pos = coords.localToWindow(Offset.Zero)
+                                                                val size = coords.size
+                                                                val s = "${pos.x.toInt()},${pos.y.toInt()},${size.width},${size.height}"
+                                                                thumbBoundsStr = s
+                                                                onItemBounds?.invoke(centerUri, s)
+                                                            }
+                                                    )
+                                                }
                                             } else {
                                                 Box(
                                                     modifier = Modifier
