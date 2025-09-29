@@ -128,6 +128,23 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * MediaGridFeature
+ * - 职责：展示媒体缩略图网格与快速滚动；承载预览 Overlay 并与其进行共享边界与滚动联动。
+ * - 关键状态：
+ *   • parentGridState：主网格滚动状态，用于联动/恢复。
+ *   • gridInitialIndex/Offset：进入预览时记录的主列表位置，用于返回入场项时恢复，避免“跳”。
+ *   • previewUrls/previewFocusUri：当前预览窗口与入场项。
+ *   • previewStartBounds：入场共享边界起点；也作为无法命中目标时的回退出口。
+ *   • thumbBoundsByUri：实时维护的 uri->bounds 映射，供退出目标使用。
+ *   • previewExitTargetBounds：传给预览页的退出目标。
+ *   • blankUri：被占位为空白的目标缩略图（退出或下拉期间）。
+ * - 联动策略：
+ *   • onPageChanged：回到“入场项”时立刻静默恢复主列表到初始位置；切到其他项时仅在不可见时滚动到目标。
+ *   • onExitBlankingChange：下拉开始立刻置空目标格子；未退出时在结束时恢复。
+ *   • onExitStart：退出动画开始时置空格子；若目标为入场项，兜底恢复主列表位置。
+ */
+
 class MediaGridFeature : Feature {
     override val id: String = ROUTE
     override val displayName: String = "媒体缩略图"
@@ -214,6 +231,9 @@ class MediaGridFeature : Feature {
                     }
                         ,
                         onItemBounds = { uri, bounds ->
+                            // 每当某个可见缩略图的窗口坐标发生变化（onGloballyPositioned）时上报
+                            // 1) 更新 uri->bounds 的实时映射，供预览页作为 exitTargetBounds 使用
+                            // 2) 若该 uri 即为当前预览页 url，则立刻刷新 previewExitTargetBounds，避免返回目标滞后
                             thumbBoundsByUri[uri] = bounds
                             if (previewCurrentUrl == uri) previewExitTargetBounds = bounds
                         },
@@ -277,6 +297,36 @@ private enum class FilterOption { All, Images, Videos, Live, Favorites }
 
 
 @OptIn(ExperimentalFoundationApi::class, kotlinx.coroutines.FlowPreview::class)
+
+/**
+ * 媒体网格主界面（支持预览 Overlay 的承载与联动）。
+ *
+ * 设计要点：
+ * - 共享边界目标（bounds）实时维护：
+ *   • onItemBounds 在每个可见缩略图 onGloballyPositioned 时上报窗口坐标；
+ *   • 使用 thumbBoundsByUri[uri] 存储；当预览当前页 url 变更时，若命中则更新 previewExitTargetBounds。
+ * - 预览 Overlay 的打开：
+ *   • onItemClick 组装一段以点击项为中心的 urls 窗口，并记录 windowStartAbs；
+ *   • 记录 gridInitialIndex/Offset 以便返回到入场项时恢复列表位置；
+ *   • 记录 previewStartBounds 用作入场与回退目标。
+ * - 页切换联动：
+ *   • 若切到“入场项”（url==previewFocusUri），不滚动主列表，并立即将主列表静默恢复到进入预览时的位置；
+ *     退出动画目标优先用当前可见 bounds，否则回退到 previewStartBounds；
+ *   • 若切到“非入场项”，仅在该项不在可见区时才滚动到目标 index，减少不必要滚动，同时保证有可用的目标 bounds。
+ * - 下拉空白占位：
+ *   • onExitBlankingChange(url, true/false) 来自预览页，在下拉开始/取消时置空/恢复缩略图格子；
+ *   • onExitStart(url) 在退出动画开始时置空格子，并在返回入场项时兜底恢复列表位置。
+ *
+ * 参数：
+ * @param mimeArg       媒体类型过滤（all/images/videos/...）
+ * @param pageSize      分页加载大小
+ * @param onItemClick   打开预览 Overlay 的回调（传入 urls 窗口、焦点 url、起点 bounds、窗口起始绝对 index）
+ * @param onItemBounds  可见缩略图的窗口坐标上报回调（用于实时维护共享边界目标）
+ * @param gridState     父层传入的 LazyGridState（便于父层进行联动滚动/恢复）
+ * @param blankUri      若非空，则该 uri 对应的格子渲染为空白占位（用于退出共享边界对接）
+ * @param span          每行列数
+ * @param spacing       格子间距
+ */
 
 @Composable
 private fun MediaGridScreen(
@@ -632,6 +682,18 @@ private fun MediaGridScreen(
 }
 
 @Composable
+/**
+ * 单个媒体缩略图。
+ * - 负责展示图片/视频封面与时长角标；
+ * - 点击后通过 onClick 交由父层处理（父层会进行预览 overlay 的打开与共享边界起点的上报）。
+ *
+ * @param uri        媒体唯一标识（用于加载与共享边界映射）
+ * @param isVideo    是否为视频，视频时显示时长角标
+ * @param durationMs 视频时长（毫秒）
+ * @param onClick    点击回调
+ * @param modifier   外部修饰符
+ */
+
 private fun MediaThumb(
     uri: String,
     isVideo: Boolean,

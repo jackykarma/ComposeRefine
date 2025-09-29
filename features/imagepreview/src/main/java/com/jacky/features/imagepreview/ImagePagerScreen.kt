@@ -70,6 +70,26 @@ import androidx.compose.material.icons.Icons
  * @param dragEasingPower     下拉缓动幂次（2=二次，3=三次，数值越大前半段越慢、越温和）
  * @param dismissThresholdDp  触发返回的垂直拖拽距离阈值（dp，越小越容易触发）
  */
+/**
+ * 设计与交互说明（补充）：
+ * - Overlay 架构：入场与退出共享边界均通过覆盖层绘制（SharedBoundsOverlay）。当覆盖层可见时，底层 Pager 内容 alpha=0，避免重影。
+ * - 退出目标选择：优先使用 exitTargetBounds（父层提供的“当前选择项”的窗口坐标）；若为空则回退到 entryStartBounds，确保动画目标始终有效。
+ * - 手势策略：
+ *   • 下拉（仅在 currentScale<=1f）：累加 dragY 并消费事件；进度映射到缩放与背景透明度；超过 dismissThresholdDp 触发返回。
+ *   • 上拉：不触发返回，仅触发 onPullUp 回调（预留）；不消费事件，避免与其他上拉手势冲突。
+ *   • 放大态（scale>1f）：禁用下拉返回，保留内容平移与横向切页的嵌套滚动策略。
+ * - 返回通路统一：系统返回/按钮返回与下拉返回共用“触发退出动画”的路径；onExitStart 在退出动画开始时回调当前 url，父层可据此将目标网格项置空。
+ * - 下拉空白占位：onExitBlankingChange(true) 在 onDragStart 立即通知父层将目标格子置空；未触发返回时在 onDragEnd 调用 onExitBlankingChange(false) 撤销；
+ *   真正触发退出时保持空白，待 onBack（动画完成）后由父层清理。
+ * - 页切换通知：在 Pager 滚动稳定后，onPageChanged(page, url) 通知父层（通常用于更新 exitTargetBounds 与可选的网格滚动）。
+ *
+ * 重要参数补充：
+ * @param exitTargetBounds   实时退出目标 bounds（窗口坐标，字符串）
+ * @param onPageChanged      页切换稳定后的回调（page 与 url）
+ * @param onExitStart        退出动画开始时回调当前 url（用于父层置空目标格子）
+ * @param onExitBlankingChange 下拉开始/取消时回调（url, active），用于在拖拽期展示空白格
+ */
+
 
 @Composable
 fun ImagePagerScreen(
@@ -458,6 +478,11 @@ fun ImagePagerScreen(
                     if (currentImageSize.width > 0 && currentImageSize.height > 0) {
                         fitRectPx(containerSize, currentImageSize)
                     } else {
+            // 退出共享边界 Overlay 绘制说明：
+            // - exitStartRectPx：起点，来源于下拉时的即时缩放/位移换算出的矩形；若非下拉返回则为当前容器全屏矩形
+            // - exitTargetRectLocal：终点，优先使用父层传入的 exitTargetBounds（窗口坐标转本地）；为空时回退 entryStartRectLocal
+            // - exitProgress：0..1 插值进度；使用 ContentScale.Crop 以保证缩回缩略图时 1:1 贴合
+
                         BoundsPx(0, 0, containerSize.width, containerSize.height)
                     }
                 } else null
