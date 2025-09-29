@@ -1,0 +1,16 @@
+flowchart TD
+  A[当前页 url] --> B{是否为入场项?}
+  B -- Yes --> C[静默恢复网格到初始位置]
+  C --> D{当前 url 在网格中可见?}
+  D -- Yes --> E[目标=thumbBoundsByUri[url]]
+  D -- No  --> F[目标=previewStartBounds(回退)]
+
+  B -- No --> G{目标项当前是否可见?}
+  G -- Yes --> H[目标=thumbBoundsByUri[url]]
+  G -- No  --> I[滚动到目标 index 并更新 bounds]
+
+  E --> J[下发 exitTargetBounds]
+  F --> J
+  H --> J
+  I --> J
+

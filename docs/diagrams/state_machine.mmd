@@ -1,0 +1,17 @@
+stateDiagram-v2
+  [*] --> Fit: 初始/还原(scale<=1)
+  Fit --> Zoomed: PinchStart / DoubleTap(2x)
+  Zoomed --> Fit: PinchFinish(target<=1x) / DoubleTap(1x)
+
+  Fit --> Dismissing: VerticalDrag(dy>0 && |dy|>=threshold)
+  Dismissing --> Exit: AnimateToTarget (SharedBounds)
+  Dismissing --> Fit: Cancel (< threshold)
+
+  Zoomed --> PanX: SingleFingerPanX
+  PanX --> Zoomed: Release
+  Zoomed --> PanY: SingleFingerPanY/VerticalDraggable
+  PanY --> Zoomed: Release
+
+  note right of Zoomed: 横向：NestedScroll 优先消费自身位移\n余量交给 Pager 支持“边滑边切页”
+  note right of Fit: 下拉：消费事件驱动退出动画\n上拉：预留 onPullUp，不触发退出
+

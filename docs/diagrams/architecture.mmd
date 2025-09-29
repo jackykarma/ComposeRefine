@@ -1,0 +1,28 @@
+flowchart LR
+  subgraph MediaGridFeature
+    G[LazyGrid (MediaGridScreen)]
+    S1[(thumbBoundsByUri)]
+    S2[(previewUrls / previewFocusUri)]
+    S3[(previewStartBounds)]
+    S4[(previewExitTargetBounds)]
+    S5[(blankUri)]
+    S6[(gridInitialIndex/Offset)]
+    G -- onItemClick --> P
+    G -- onItemBounds(uri,bounds) --> S1
+  end
+
+  subgraph Overlay: ImagePagerScreen
+    P[Pager + ZoomableImage]
+    O[SharedBoundsOverlay]
+  end
+
+  S2 -. startIndex .-> P
+  S3 -. entryStartBounds .-> P
+  S4 -. exitTargetBounds .-> P
+  P -- onPageChanged(page,url) --> MediaGridFeature
+  P -- onExitStart(url) --> S5
+  P -- onExitBlankingChange(url,active) --> S5
+  MediaGridFeature -- derive/compute --> S4
+  MediaGridFeature -- restore grid when needed --> G
+  O -. draw entry/exit .- P
+
